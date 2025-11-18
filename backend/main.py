@@ -9,17 +9,28 @@ from sqlalchemy.orm import Session
 from .config import get_settings
 from .database import Base, SessionLocal, engine
 from .domains import DOMAINS
-from .schemas import DocumentRow, RunCreate, RunDetail, RunList, RunSummary
+from .schemas import (
+    DocumentRow,
+    EnvConfig,
+    EnvConfigUpdate,
+    RunCreate,
+    RunDetail,
+    RunList,
+    RunSummary,
+)
 from .services import results as results_service
 from .services import runs as run_service
+from .services import env_config as env_config_service
 
 
 app = FastAPI(title="Windsurf Paraphrasing Backend")
 
-# CORS: Frontend läuft auf http://localhost:5500, Backend auf http://localhost:8001
+settings = get_settings()
+
+# CORS: Frontend-Origin aus Konfiguration/Umgebung (FRONTEND_ORIGIN)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5500"],
+    allow_origins=[settings.frontend_origin],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -102,3 +113,21 @@ def export_run_summary(run_id: str, db: Session = Depends(get_db)):
         media_type="application/json",
         headers={"Content-Disposition": f"attachment; filename=run_{run_id}_summary.json"},
     )
+
+
+@app.get("/env-config", response_model=EnvConfig)
+def get_env_config():
+    """Return current env-style configuration (.env or defaults).
+
+    Sensible defaults werden aus .env.example / Startscript übernommen.
+    """
+    return env_config_service.get_env_config()
+
+
+@app.post("/env-config", response_model=EnvConfig)
+def update_env_config(payload: EnvConfigUpdate):
+    """Update env-style configuration and persist to .env.
+
+    Änderungen werden beim nächsten ./start.sh-Lauf wirksam.
+    """
+    return env_config_service.update_env_config(payload)

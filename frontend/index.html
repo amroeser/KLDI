@@ -241,6 +241,48 @@
         font-size: 0.85rem;
       }
 
+      .env-panel {
+        margin-top: 1rem;
+        padding: 0.75rem;
+        border-radius: 0.75rem;
+        background: rgba(15, 23, 42, 0.9);
+        border: 1px dashed rgba(148, 163, 184, 0.4);
+      }
+
+      .env-panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        cursor: pointer;
+        font-size: 0.9rem;
+      }
+
+      .env-panel-body {
+        margin-top: 0.5rem;
+        display: none;
+        font-size: 0.8rem;
+      }
+
+      .env-panel-body label {
+        margin-top: 0.35rem;
+      }
+
+      .env-panel-body input[type="text"],
+      .env-panel-body input[type="number"] {
+        width: 100%;
+        padding: 0.3rem 0.4rem;
+        border-radius: 0.4rem;
+        border: 1px solid #4b5563;
+        background: #020617;
+        color: #e5e7eb;
+        font-size: 0.8rem;
+      }
+
+      .env-panel-body .hint {
+        margin-top: 0.4rem;
+        color: #9ca3af;
+      }
+
       table {
         width: 100%;
         border-collapse: collapse;
@@ -290,14 +332,15 @@
     <div class="container">
       <h1>KLDI Paraphrasing Analyse</h1>
       <p class="small">
-        Backend läuft auf <code>http://localhost:8001</code>. Stelle sicher,
-        dass FastAPI und der Worker laufen.
+        Backend-URL und Ports werden über Umgebungsvariablen und <code>config.js</code>
+        konfiguriert. Stelle sicher, dass das Backend über <code>./start.sh</code>
+        gestartet wurde.
       </p>
 
       <div class="controls">
         <div>
           <label for="count">Anzahl Texte (1–2000)</label>
-          <input id="count" type="number" min="1" max="2000" value="100" />
+          <input id="count" type="number" min="1" max="2000" value="10" />
         </div>
         <div>
           <label>Themenfelder</label>
@@ -309,6 +352,36 @@
         <div>
           <label>Run-ID</label>
           <div id="runId" class="mono small">–</div>
+        </div>
+      </div>
+
+      <div class="env-panel small">
+        <div id="envPanelHeader" class="env-panel-header">
+          <span>.env Konfiguration (OpenAI & Ports)</span>
+          <span id="envPanelToggle">aufklappen</span>
+        </div>
+        <div id="envPanelBody" class="env-panel-body">
+          <p class="hint">
+            Änderungen werden in <code>.env</code> im Projektordner gespeichert und beim
+            nächsten <code>./start.sh</code>-Start wirksam.
+          </p>
+          <label for="envOpenAiKey">OPENAI_API_KEY</label>
+          <input id="envOpenAiKey" type="text" autocomplete="off" />
+
+          <label for="envOpenAiModel">OPENAI_MODEL</label>
+          <input id="envOpenAiModel" type="text" autocomplete="off" />
+
+          <label for="envOpenAiBaseUrl">OPENAI_BASE_URL</label>
+          <input id="envOpenAiBaseUrl" type="text" autocomplete="off" />
+
+          <label for="envBackendPort">BACKEND_PORT</label>
+          <input id="envBackendPort" type="number" min="1" max="65535" />
+
+          <label for="envFrontendPortBase">FRONTEND_PORT_BASE</label>
+          <input id="envFrontendPortBase" type="number" min="1" max="65535" />
+
+          <p id="envStatus" class="hint"></p>
+          <button id="envSaveBtn" class="primary" type="button">.env speichern</button>
         </div>
       </div>
 
@@ -372,8 +445,8 @@
         </tbody>
       </table>
     </div>
-
+    
+    <script src="config.js"></script>
     <script src="app.js?v=2"></script>
   </body>
 </html>
-

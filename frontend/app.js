@@ -1,4 +1,4 @@
-const API_BASE = 'http://localhost:8001';
+const API_BASE = window.API_BASE || 'http://localhost:8101';
 
 const countInput = document.getElementById('count');
 const startBtn = document.getElementById('startBtn');
@@ -16,6 +16,16 @@ const progressBar = document.getElementById('progressBar');
 const errorBox = document.getElementById('errorBox');
 const perDomainChart = document.getElementById('perDomainChart');
 const statsCharts = document.getElementById('statsCharts');
+const envPanelHeader = document.getElementById('envPanelHeader');
+const envPanelToggle = document.getElementById('envPanelToggle');
+const envPanelBody = document.getElementById('envPanelBody');
+const envOpenAiKey = document.getElementById('envOpenAiKey');
+const envOpenAiModel = document.getElementById('envOpenAiModel');
+const envOpenAiBaseUrl = document.getElementById('envOpenAiBaseUrl');
+const envBackendPort = document.getElementById('envBackendPort');
+const envFrontendPortBase = document.getElementById('envFrontendPortBase');
+const envStatus = document.getElementById('envStatus');
+const envSaveBtn = document.getElementById('envSaveBtn');
 
 let currentRunId = null;
 let pollTimer = null;
@@ -57,6 +67,83 @@ async function loadDomains() {
 
 // Domänen direkt beim Laden der Seite holen
 loadDomains();
+
+// .env-Konfiguration laden
+async function loadEnvConfig() {
+  if (!envPanelBody) return;
+  try {
+    const res = await fetch(`${API_BASE}/env-config`);
+    if (!res.ok) throw new Error('Fehler beim Laden der Env-Konfiguration');
+    const data = await res.json();
+
+    if (envOpenAiKey) envOpenAiKey.value = data.openai_api_key || '';
+    if (envOpenAiModel) envOpenAiModel.value = data.openai_model || '';
+    if (envOpenAiBaseUrl) envOpenAiBaseUrl.value = data.openai_base_url || '';
+    if (envBackendPort) envBackendPort.value = data.backend_port || '';
+    if (envFrontendPortBase) envFrontendPortBase.value = data.frontend_port_base || '';
+
+    if (envStatus) {
+      envStatus.textContent = data.env_exists
+        ? '.env gefunden. Änderungen überschreiben bestehende Werte.'
+        : 'Noch keine .env gefunden. Beim Speichern wird eine neue .env angelegt.';
+    }
+  } catch (err) {
+    console.error(err);
+    if (envStatus) {
+      envStatus.textContent = 'Fehler beim Laden der .env-Konfiguration.';
+    }
+  }
+}
+
+if (envPanelHeader && envPanelBody && envPanelToggle) {
+  envPanelHeader.addEventListener('click', () => {
+    const isOpen = envPanelBody.style.display === 'block';
+    envPanelBody.style.display = isOpen ? 'none' : 'block';
+    envPanelToggle.textContent = isOpen ? 'aufklappen' : 'zuklappen';
+    if (!isOpen) {
+      loadEnvConfig();
+    }
+  });
+}
+
+if (envSaveBtn) {
+  envSaveBtn.addEventListener('click', async () => {
+    try {
+      envSaveBtn.disabled = true;
+      envStatus.textContent = 'Speichere .env...';
+      const payload = {
+        openai_api_key: envOpenAiKey.value || null,
+        openai_model: envOpenAiModel.value || null,
+        openai_base_url: envOpenAiBaseUrl.value || null,
+        backend_port: envBackendPort.value ? Number(envBackendPort.value) : null,
+        frontend_port_base: envFrontendPortBase.value
+          ? Number(envFrontendPortBase.value)
+          : null,
+      };
+
+      const res = await fetch(`${API_BASE}/env-config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error('Fehler beim Speichern der Env-Konfiguration');
+      const data = await res.json();
+      envStatus.textContent =
+        'Gespeichert. Bitte Backend mit ./start.sh neu starten, damit die Änderungen wirksam werden.';
+
+      // Felder mit normalisierten Werten aktualisieren
+      if (envOpenAiModel) envOpenAiModel.value = data.openai_model || '';
+      if (envOpenAiBaseUrl) envOpenAiBaseUrl.value = data.openai_base_url || '';
+      if (envBackendPort) envBackendPort.value = data.backend_port || '';
+      if (envFrontendPortBase) envFrontendPortBase.value = data.frontend_port_base || '';
+    } catch (err) {
+      console.error(err);
+      envStatus.textContent = 'Fehler beim Speichern der .env.';
+    } finally {
+      envSaveBtn.disabled = false;
+    }
+  });
+}
 
 function renderSummary(summary) {
   if (!summary) {

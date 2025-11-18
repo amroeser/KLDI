@@ -20,6 +20,9 @@ class Settings:
     # Simple environment flag for /health endpoint
     environment: str = os.getenv("APP_ENVIRONMENT", "development")
 
+    # Frontend-Origin (für CORS), z.B. "http://localhost:5500"
+    frontend_origin: str = os.getenv("FRONTEND_ORIGIN", "http://localhost:5500")
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

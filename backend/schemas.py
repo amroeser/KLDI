@@ -45,3 +45,25 @@ class DocumentRow(BaseModel):
     kldi_initial: Optional[float] = None
     kldi_best: Optional[float] = None
     iterations: Optional[int] = None
+
+
+class EnvConfig(BaseModel):
+    # OpenAI / LLM Einstellungen
+    openai_api_key: Optional[str] = None
+    openai_model: Optional[str] = None
+    openai_base_url: Optional[str] = None
+
+    # Ports
+    backend_port: Optional[int] = None
+    frontend_port_base: Optional[int] = None
+
+    # Meta
+    env_exists: bool = False
+
+
+class EnvConfigUpdate(BaseModel):
+    openai_api_key: Optional[str] = None
+    openai_model: Optional[str] = None
+    openai_base_url: Optional[str] = None
+    backend_port: Optional[int] = None
+    frontend_port_base: Optional[int] = None
