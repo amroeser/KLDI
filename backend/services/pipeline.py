@@ -31,6 +31,12 @@ MAX_PARAPHRASE_ITERATIONS = 5
 # bevor der Run als fehlgeschlagen gilt
 MAX_SCRAPE_ATTEMPTS_FACTOR = 5
 
+# Mindest-Stichprobengröße für robuste statistische Aussagen (pro Gruppe)
+MIN_ROBUST_SAMPLE_SIZE = 30
+
+# Anzahl Bootstrap-Samples für Konfidenzintervalle
+BOOTSTRAP_SAMPLES = 200
+
 
 def fetch_snippet_from_sources(sources: List[str]) -> Tuple[str, str]:
     """Fetch a real text snippet from the configured source URLs.
@@ -338,9 +344,22 @@ def process_run_job(run_id: str, domain_slugs: List[str] | None = None) -> None:
         adaptive_threshold: float | None = None
         p_value: float | None = None
         auc: float | None = None
+        cliffs_delta: float | None = None
+        cliffs_magnitude: str | None = None
+        roc_auc_ci: Tuple[float, float] | None = None
+        kldi_median_diff: float | None = None
+        kldi_median_diff_ci: Tuple[float, float] | None = None
+        robust_samples: bool = False
+
         if hh_values and hk_values:
             hh_arr = np.array(hh_values)
             hk_arr = np.array(hk_values)
+
+            # Stichprobengröße prüfen
+            n_hh = len(hh_arr)
+            n_hk = len(hk_arr)
+            robust_samples = n_hh >= MIN_ROBUST_SAMPLE_SIZE and n_hk >= MIN_ROBUST_SAMPLE_SIZE
+
             q1 = np.percentile(hh_arr, 25)
             q3 = np.percentile(hh_arr, 75)
             iqr = q3 - q1
@@ -354,12 +373,67 @@ def process_run_job(run_id: str, domain_slugs: List[str] | None = None) -> None:
                 p_value = None
 
             # ROC/AUC für KLDI als Detektor
+            labels = [0] * len(hh_arr) + [1] * len(hk_arr)
+            scores = list(hh_arr) + list(hk_arr)
             try:
-                labels = [0] * len(hh_arr) + [1] * len(hk_arr)
-                scores = list(hh_arr) + list(hk_arr)
                 auc = float(roc_auc_score(labels, scores))
             except Exception:
                 auc = None
+
+            # Effektstärke: Cliff's Delta (HH vs HK, höhere Werte = eher KI)
+            try:
+                greater = 0
+                less = 0
+                for x in hh_arr:
+                    for y in hk_arr:
+                        if x > y:
+                            greater += 1
+                        elif x < y:
+                            less += 1
+                denom = float(n_hh * n_hk)
+                cliffs_delta = (greater - less) / denom if denom > 0 else None
+                if cliffs_delta is not None:
+                    ad = abs(cliffs_delta)
+                    if ad < 0.147:
+                        cliffs_magnitude = "negligible"
+                    elif ad < 0.33:
+                        cliffs_magnitude = "small"
+                    elif ad < 0.474:
+                        cliffs_magnitude = "medium"
+                    else:
+                        cliffs_magnitude = "large"
+            except Exception:
+                cliffs_delta = None
+                cliffs_magnitude = None
+
+            # Bootstrap-Konfidenzintervalle nur, wenn Stichprobe halbwegs groß ist
+            roc_auc_ci = None
+            kldi_median_diff = None
+            kldi_median_diff_ci = None
+            if robust_samples and auc is not None:
+                rng = np.random.default_rng()
+                auc_samples: List[float] = []
+                diff_samples: List[float] = []
+                for _ in range(BOOTSTRAP_SAMPLES):
+                    # Resample pro Gruppe
+                    hh_bs = rng.choice(hh_arr, size=n_hh, replace=True)
+                    hk_bs = rng.choice(hk_arr, size=n_hk, replace=True)
+                    labels_bs = [0] * n_hh + [1] * n_hk
+                    scores_bs = list(hh_bs) + list(hk_bs)
+                    try:
+                        auc_bs = roc_auc_score(labels_bs, scores_bs)
+                    except Exception:
+                        continue
+                    auc_samples.append(auc_bs)
+                    diff_samples.append(float(np.median(hk_bs) - np.median(hh_bs)))
+
+                if auc_samples:
+                    low, high = np.percentile(auc_samples, [2.5, 97.5])
+                    roc_auc_ci = (float(low), float(high))
+                if diff_samples:
+                    kldi_median_diff = float(np.median(diff_samples))
+                    low, high = np.percentile(diff_samples, [2.5, 97.5])
+                    kldi_median_diff_ci = (float(low), float(high))
 
             # Aggregierte KLDI-Iterationswerte
             if hk_initial_values:
@@ -379,9 +453,15 @@ def process_run_job(run_id: str, domain_slugs: List[str] | None = None) -> None:
                 "adaptive_threshold": adaptive_threshold,
                 "mannwhitney_p": p_value,
                 "roc_auc": auc,
+                "roc_auc_ci": roc_auc_ci,
+                "cliffs_delta": cliffs_delta,
+                "cliffs_delta_magnitude": cliffs_magnitude,
                 "kldi_initial_avg": kldi_initial_avg,
                 "kldi_best_avg": kldi_best_avg,
                 "kldi_avg_improvement": kldi_avg_improvement,
+                "kldi_median_diff": kldi_median_diff,
+                "kldi_median_diff_ci": kldi_median_diff_ci,
+                "robust_sample_sizes": robust_samples,
             }
 
         # Finale Klassifikation mit adaptiver Schwelle, falls vorhanden
@@ -405,11 +485,29 @@ def process_run_job(run_id: str, domain_slugs: List[str] | None = None) -> None:
 
         # Textuelle Einwertung
         interpretation = "Nicht genug Daten für eine statistische Bewertung."
-        if adaptive_threshold is not None and p_value is not None and auc is not None:
-            if p_value < 0.05 and auc >= 0.7:
-                interpretation = "KLDI hoch und Unterschied signifikant: KI-Text ist in dieser Stichprobe statistisch erkennbar (signifikant, AUC hoch)."
+        if adaptive_threshold is not None and auc is not None:
+            # Basis-Aussage abhängig von Signifikanz, AUC und Effektstärke
+            if p_value is not None and p_value < 0.05 and auc >= 0.7:
+                if stats_summary.get("robust_sample_sizes") and stats_summary.get("cliffs_delta_magnitude") in {
+                    "medium",
+                    "large",
+                }:
+                    interpretation = (
+                        "Starke Evidenz: KLDI hoch und Unterschied statistisch signifikant "
+                        "mit ausreichender Stichprobengröße und mindestens mittlerer Effektstärke. "
+                        "KI-Text ist in dieser Stichprobe robust erkennbar."
+                    )
+                else:
+                    interpretation = (
+                        "Signifikanter Unterschied im KLDI und erhöhte AUC, aber Stichprobengröße "
+                        "oder Effektstärke sind begrenzt. Ergebnis ist als vorläufig/explorativ zu werten."
+                    )
             else:
-                interpretation = "KLDI überwiegend gering bzw. Verteilungen stark überlappend: KI-Text ist anhand des KLDI nicht zuverlässig von Menschentext unterscheidbar (keine klare Signifikanz oder niedrige AUC)."
+                interpretation = (
+                    "Keine klare Signifikanz oder niedrige AUC: die KLDI-Verteilungen von Human→Human "
+                    "und Human→KI überlappen stark. Eine zuverlässige Unterscheidung ist anhand des KLDI "
+                    "in dieser Stichprobe nicht möglich."
+                )
 
         if total_created == 0:
             run.status = RunStatus.FAILED
