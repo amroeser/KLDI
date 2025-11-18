@@ -1,0 +1,413 @@
+from __future__ import annotations
+
+import itertools
+import random
+from collections import defaultdict
+from datetime import datetime
+from typing import Dict, List, Tuple
+
+import numpy as np
+import requests
+from bs4 import BeautifulSoup
+from scipy.stats import mannwhitneyu
+from sklearn.metrics import roc_auc_score
+
+from ..database import SessionLocal
+from ..domains import DOMAINS
+from ..models import Document, Evaluation, Paraphrase, Run, RunStatus
+from paraphrase_agents.agent import ParaphraseAgent
+from paraphrase_agents.evaluator import KLDEvaluator
+
+# Snippet length configuration
+MIN_PARAGRAPH_LENGTH = 80
+MAX_PARAGRAPH_LENGTH = 220
+
+# How many paraphrasing refinement steps per Dokument maximal
+MAX_PARAPHRASE_ITERATIONS = 5
+
+# Wie oft wir höchstens versuchen, Snippets zu scrapen (Faktor * requested_count),
+# bevor der Run als fehlgeschlagen gilt
+MAX_SCRAPE_ATTEMPTS_FACTOR = 5
+
+
+def fetch_snippet_from_sources(sources: List[str]) -> Tuple[str, str]:
+    """Fetch a real text snippet from the configured source URLs.
+
+    Es wird eine der konfigurierten Quellen per HTTP abgerufen und ein
+    Absatz aus dem HTML extrahiert. Der zurückgegebene Text landet als
+    `original_text` in der Tabelle, die Paraphrase ist anschließend der
+    OpenAI-Output zu genau diesem Ausschnitt.
+    """
+    if not sources:
+        return "", ""
+
+    # Wir versuchen ein paar zufällige Quellen, bis wir einen brauchbaren
+    # Absatz finden.
+    candidate_urls = list(sources)
+    random.shuffle(candidate_urls)
+
+    for url in candidate_urls[:5]:
+        try:
+            resp = requests.get(url, timeout=10)
+            if resp.status_code != 200 or "text" not in resp.headers.get("Content-Type", ""):
+                continue
+
+            soup = BeautifulSoup(resp.text, "html.parser")
+            paragraphs = [
+                " ".join(p.get_text(separator=" ", strip=True).split())
+                for p in soup.find_all("p")
+            ]
+
+            # Filter auf sinnvolle Länge
+            candidates = [
+                p
+                for p in paragraphs
+                if MIN_PARAGRAPH_LENGTH <= len(p) <= MAX_PARAGRAPH_LENGTH
+            ]
+
+            if not candidates:
+                # Fallback: ggf. längere Texte kürzen
+                for p in paragraphs:
+                    if len(p) > MIN_PARAGRAPH_LENGTH:
+                        candidates.append(p[:MAX_PARAGRAPH_LENGTH])
+
+            if not candidates:
+                continue
+
+            snippet = random.choice(candidates)
+            return snippet, url
+        except Exception:
+            # Bei Netzwerk-/Parsingfehlern einfach die nächste Quelle probieren
+            continue
+
+    # Wenn alles fehlschlägt, kein Dokument erzeugen
+    return "", ""
+
+
+def process_run_job(run_id: str, domain_slugs: List[str] | None = None) -> None:
+    session = SessionLocal()
+    try:
+        run = session.get(Run, run_id)
+        if not run:
+            return
+        # Seed python-level randomness for reproducible scraping/snippet Auswahl
+        if run.seed is not None:
+            random.seed(run.seed)
+        run.status = RunStatus.RUNNING
+        run.summary = {
+            "stage": "initializing",
+            "processed": 0,
+            "expected": run.requested_count,
+        }
+        session.commit()
+
+        paraphraser = ParaphraseAgent(model=run.llm_model, temperature=run.temperature)
+        evaluator = KLDEvaluator(bootstrap_corpus=True)
+
+        # Ermittele, welche Domains für diesen Run aktiv sind
+        if domain_slugs:
+            active_domains = [d for d in DOMAINS if d.slug in domain_slugs]
+            if not active_domains:
+                active_domains = DOMAINS
+        else:
+            active_domains = DOMAINS
+
+        # Merke die ausgewählten Domains im Summary, damit im UI ersichtlich ist,
+        # welche Themenfelder für diesen Run verwendet wurden
+        if isinstance(run.summary, dict):
+            run.summary["domains"] = [d.slug for d in active_domains]
+            session.commit()
+
+        total_created = 0
+        hk_values: List[float] = []  # Human→KI KLDI-Werte (bestes Ergebnis nach Iterationen)
+        hk_initial_values: List[float] = []  # KLDI nach erster Paraphrasierung
+        domain_stats: Dict[str, Dict[str, float | int]] = defaultdict(
+            lambda: {"count": 0, "kldi_sum": 0.0, "human_like": 0, "detectable": 0}
+        )
+
+        # Wir rotieren über alle aktiven Domains, bis genau requested_count Dokumente erzeugt wurden
+        max_attempts = run.requested_count * MAX_SCRAPE_ATTEMPTS_FACTOR
+        attempts = 0
+        domain_cycle = itertools.cycle(active_domains)
+
+        while total_created < run.requested_count and attempts < max_attempts:
+            domain = next(domain_cycle)
+            attempts += 1
+
+            snippet, source_url = fetch_snippet_from_sources(domain.sources)
+            if not snippet:
+                continue
+
+            document = Document(
+                run_id=run.id,
+                domain=domain.slug,
+                source_url=source_url,
+                retrieved_at=datetime.utcnow(),
+                original_text=snippet,
+            )
+            session.add(document)
+            session.flush()
+
+            # Iterative Paraphrasierung mit KLDI-Minimierung
+            best_paraphrase_text = None
+            best_kld = float("inf")
+            initial_kld = None
+            iterations_used = 0
+
+            for iteration in range(1, MAX_PARAPHRASE_ITERATIONS + 1):
+                paraphrase_text = paraphraser.paraphrase(snippet)
+                kld_value = evaluator.calculate_kld(snippet, paraphrase_text)
+
+                if initial_kld is None:
+                    initial_kld = kld_value
+
+                if kld_value < best_kld:
+                    best_kld = kld_value
+                    best_paraphrase_text = paraphrase_text
+
+                iterations_used = iteration
+
+            # Fallback: sollte aus irgendeinem Grund kein Paraphrase gefunden worden sein,
+            # brechen wir diesen Durchlauf ab.
+            if best_paraphrase_text is None:
+                continue
+
+            session.add(
+                Paraphrase(
+                    document_id=document.id,
+                    llm_model=run.llm_model,
+                    temperature=run.temperature,
+                    paraphrased_text=best_paraphrase_text,
+                )
+            )
+
+            # Evaluation mit Speicherung von initialem und bestem KLDI
+            token_stats = {
+                "length_original": len(snippet.split()),
+                "length_paraphrase": len(best_paraphrase_text.split()),
+            }
+            if initial_kld is not None:
+                token_stats["kldi_initial"] = float(initial_kld)
+            token_stats["kldi_best"] = float(best_kld)
+            token_stats["iterations"] = iterations_used
+
+            session.add(
+                Evaluation(
+                    document_id=document.id,
+                    kldi=best_kld,
+                    token_stats=token_stats,
+                    classification="human-like",  # Platzhalter; finale Klassifikation folgt später
+                )
+            )
+
+            total_created += 1
+            hk_values.append(best_kld)
+            if initial_kld is not None:
+                hk_initial_values.append(initial_kld)
+            stats = domain_stats[domain.slug]
+            stats["count"] += 1
+            stats["kldi_sum"] += best_kld
+            stats["human_like"] += 1
+
+            # Fortschritt grob aktualisieren (nicht bei jedem einzelnen Dokument committen)
+            if total_created % 10 == 0:
+                run.summary = {
+                    "stage": "processing",
+                    "processed": total_created,
+                    "expected": run.requested_count,
+                }
+                session.commit()
+
+        # Wenn wir trotz mehrfacher Versuche nicht genug Dokumente erzeugen konnten, schlagen wir fehl.
+        if total_created < run.requested_count:
+            run.status = RunStatus.FAILED
+            run.summary = {
+                "stage": "failed",
+                "error": f"Only {total_created} of {run.requested_count} documents could be scraped and processed.",
+                "processed": total_created,
+                "expected": run.requested_count,
+            }
+            session.commit()
+            return
+
+        # Prüfe, ob alle ausgewählten Domains mindestens ein Dokument liefern konnten.
+        # Wenn nicht, markieren wir den Run als fehlgeschlagen, damit klar ist,
+        # dass bestimmte Themenfelder nicht ausgewertet wurden.
+        missing_domains = [d.slug for d in active_domains if domain_stats[d.slug]["count"] == 0]
+        if missing_domains:
+            run.status = RunStatus.FAILED
+            run.summary = {
+                "stage": "failed",
+                "error": (
+                    "No documents processed for domains: "
+                    + ", ".join(sorted(missing_domains))
+                ),
+                "documents_processed": total_created,
+                "processed": total_created,
+                "expected": run.requested_count,
+                "domains": [d.slug for d in active_domains],
+            }
+            session.commit()
+            return
+
+        # Baseline Human→Human KLDI und statistische Tests
+        run.summary = {
+            "stage": "computing_stats",
+            "processed": total_created,
+            "expected": run.requested_count,
+        }
+        session.commit()
+        hh_values: List[float] = []
+        if total_created > 1:
+            docs = (
+                session.query(Document)
+                .filter(Document.run_id == run.id)
+                .order_by(Document.domain, Document.id)
+                .all()
+            )
+            # Erzeuge eine begrenzte Anzahl Human→Human-Paare pro Domäne
+            pairs: List[Tuple[str, str]] = []
+            max_pairs_per_domain = 50
+            by_domain: Dict[str, List[Document]] = defaultdict(list)
+            for d in docs:
+                by_domain[d.domain].append(d)
+            for domain, dom_docs in by_domain.items():
+                if len(dom_docs) < 2:
+                    continue
+                local_pairs = 0
+                for i in range(len(dom_docs) - 1):
+                    for j in range(i + 1, len(dom_docs)):
+                        pairs.append((dom_docs[i].original_text, dom_docs[j].original_text))
+                        local_pairs += 1
+                        if local_pairs >= max_pairs_per_domain:
+                            break
+                    if local_pairs >= max_pairs_per_domain:
+                        break
+            for t1, t2 in pairs:
+                hh_values.append(evaluator.calculate_kld(t1, t2))
+
+        # Adaptive Schwelle und statistische Bewertung
+        stats_summary: Dict[str, object] = {}
+        adaptive_threshold: float | None = None
+        p_value: float | None = None
+        auc: float | None = None
+        if hh_values and hk_values:
+            hh_arr = np.array(hh_values)
+            hk_arr = np.array(hk_values)
+            q1 = np.percentile(hh_arr, 25)
+            q3 = np.percentile(hh_arr, 75)
+            iqr = q3 - q1
+            # Schwelle: oberes Quartil plus 1.5*IQR als "klar über menschlichem Bereich"
+            adaptive_threshold = float(q3 + 1.5 * iqr)
+
+            # Mann-Whitney-U-Test Human→Human vs Human→KI
+            try:
+                stat, p_value = mannwhitneyu(hh_arr, hk_arr, alternative="two-sided")
+            except Exception:
+                p_value = None
+
+            # ROC/AUC für KLDI als Detektor
+            try:
+                labels = [0] * len(hh_arr) + [1] * len(hk_arr)
+                scores = list(hh_arr) + list(hk_arr)
+                auc = float(roc_auc_score(labels, scores))
+            except Exception:
+                auc = None
+
+            # Aggregierte KLDI-Iterationswerte
+            if hk_initial_values:
+                kldi_initial_avg = float(np.mean(hk_initial_values))
+                kldi_best_avg = float(np.mean(hk_values))
+                kldi_avg_improvement = float(
+                    kldi_initial_avg - kldi_best_avg
+                )
+            else:
+                kldi_initial_avg = None
+                kldi_best_avg = None
+                kldi_avg_improvement = None
+
+            stats_summary = {
+                "human_human_count": len(hh_arr),
+                "human_ki_count": len(hk_arr),
+                "adaptive_threshold": adaptive_threshold,
+                "mannwhitney_p": p_value,
+                "roc_auc": auc,
+                "kldi_initial_avg": kldi_initial_avg,
+                "kldi_best_avg": kldi_best_avg,
+                "kldi_avg_improvement": kldi_avg_improvement,
+            }
+
+        # Finale Klassifikation mit adaptiver Schwelle, falls vorhanden
+        if adaptive_threshold is not None:
+            evals = (
+                session.query(Evaluation)
+                .join(Document, Evaluation.document_id == Document.id)
+                .filter(Document.run_id == run.id)
+                .all()
+            )
+            # Reset domain_stats und neu zählen mit finaler Klassifikation
+            for stats in domain_stats.values():
+                stats["human_like"] = 0
+                stats["detectable"] = 0
+            for ev in evals:
+                cls = "human-like" if ev.kldi <= adaptive_threshold else "detectable"
+                ev.classification = cls
+                dom = ev.document.domain
+                stats = domain_stats[dom]
+                stats[cls.replace("-", "_")] += 1
+
+        # Textuelle Einwertung
+        interpretation = "Nicht genug Daten für eine statistische Bewertung."
+        if adaptive_threshold is not None and p_value is not None and auc is not None:
+            if p_value < 0.05 and auc >= 0.7:
+                interpretation = "KLDI hoch und Unterschied signifikant: KI-Text ist in dieser Stichprobe statistisch erkennbar (signifikant, AUC hoch)."
+            else:
+                interpretation = "KLDI überwiegend gering bzw. Verteilungen stark überlappend: KI-Text ist anhand des KLDI nicht zuverlässig von Menschentext unterscheidbar (keine klare Signifikanz oder niedrige AUC)."
+
+        if total_created == 0:
+            run.status = RunStatus.FAILED
+            run.summary = {
+                "stage": "failed",
+                "error": "No documents processed",
+                "documents_processed": 0,
+                "processed": 0,
+                "expected": run.requested_count,
+                "domains": [d.slug for d in active_domains],
+                "analysis": {"interpretation": interpretation} if interpretation else None,
+            }
+        else:
+            per_domain_summary = {
+                domain: {
+                    "count": stats["count"],
+                    "avg_kld": stats["kldi_sum"] / stats["count"] if stats["count"] else 0.0,
+                    "human_like": stats["human_like"],
+                    "detectable": stats["detectable"],
+                }
+                for domain, stats in domain_stats.items()
+            }
+            run.status = RunStatus.COMPLETED
+            run.summary = {
+                "stage": "completed",
+                "documents_processed": total_created,
+                "processed": total_created,
+                "expected": run.requested_count,
+                "domains": [d.slug for d in active_domains],
+                "per_domain": per_domain_summary,
+                "stats": stats_summary,
+                "analysis": {"interpretation": interpretation},
+            }
+        session.commit()
+    except Exception as exc:  # pragma: no cover
+        session.rollback()
+        run = session.get(Run, run_id)
+        if run:
+            run.status = RunStatus.FAILED
+            run.summary = {
+                "stage": "failed",
+                "error": str(exc),
+                "processed": 0,
+                "expected": run.requested_count if hasattr(run, "requested_count") else None,
+            }
+            session.commit()
+    finally:
+        session.close()
