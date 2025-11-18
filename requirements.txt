@@ -16,3 +16,6 @@ redis>=5.0.0
 rq>=1.15.0
 pydantic>=2.5.0
 pydantic-settings>=2.0.0
+
+# For PDF text extraction (medical domain sources)
+pypdf>=3.0.0

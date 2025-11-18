@@ -30,17 +30,17 @@ DOMAINS: List[DomainConfig] = [
             "https://www.archives.gov/founding-docs/constitution-transcript",
             "https://www.law.cornell.edu/wex/bill_of_rights",
             "https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:12012E/TXT",  # Consolidated TEU
-            "https://www.bundestag.de/parlament/aufgaben/rechtsgrundlagen/grundgesetz_en",  # German Basic Law (EN)
+            "https://www.gesetze-im-internet.de/gg/BJNR000010949.html",  # German Basic Law (EN)
         ],
     ),
     DomainConfig(
         name="Medizin",
         slug="medical",
         sources=[
-            "https://www.who.int/news-room/detail/13-10-2017-global-tuberculosis-report-2017",
-            "https://www.cdc.gov/media/releases/2018/p0116-flu-update-activity.html",
-            "https://www.who.int/news-room/detail/17-07-2015-world-malaria-report-2015",
-            "https://www.cdc.gov/media/releases/2016/p0120-zika-virus.html",
+            "https://chlaep.org.uy/wp-content/uploads/2020/11/Reporte-Global-TB-2017.pdf",
+            "https://stacks.cdc.gov/view/cdc/84012/cdc_84012_DS1.pdf",
+            "https://www.afro.who.int/sites/default/files/2017-06/9789241565158_eng.pdf",
+            "https://www.ecdc.europa.eu/sites/default/files/documents/AER_for_2017-Zika-virus-disease.pdf",
         ],
     ),
     DomainConfig(

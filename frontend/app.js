@@ -14,6 +14,8 @@ const kldiStatsEl = document.getElementById('kldiStatsText');
 const progressText = document.getElementById('progressText');
 const progressBar = document.getElementById('progressBar');
 const errorBox = document.getElementById('errorBox');
+const perDomainChart = document.getElementById('perDomainChart');
+const statsCharts = document.getElementById('statsCharts');
 
 let currentRunId = null;
 let pollTimer = null;
@@ -126,6 +128,98 @@ function renderSummary(summary) {
   }
 
   summaryEl.textContent = lines.length ? lines.join('\n') : '–';
+
+  // Statistische Mini-Grafiken
+  if (statsCharts) {
+    statsCharts.innerHTML = '';
+    const stats = summary.stats || {};
+
+    // ROC AUC (0–1)
+    if (typeof stats.roc_auc === 'number') {
+      const auc = Math.max(0, Math.min(1, stats.roc_auc));
+      const pct = Math.round(auc * 100);
+      const row = document.createElement('div');
+      row.className = 'stat-row';
+      row.innerHTML = `
+        <span class="stat-label">ROC AUC</span>
+        <div class="stat-bar"><div class="stat-bar-inner" style="width: ${pct}%"></div></div>
+        <span class="stat-value">${auc.toFixed(3)}</span>
+      `;
+      statsCharts.appendChild(row);
+    }
+
+    // KLDI Verbesserung (avg) – auf 0–0,5 clampen für die Anzeige
+    if (typeof stats.kldi_avg_improvement === 'number') {
+      const maxImprovement = 0.5;
+      const imp = Math.max(0, Math.min(maxImprovement, stats.kldi_avg_improvement));
+      const pct = Math.round((imp / maxImprovement) * 100);
+      const row = document.createElement('div');
+      row.className = 'stat-row';
+      row.innerHTML = `
+        <span class="stat-label">KLDI Δ (avg)</span>
+        <div class="stat-bar"><div class="stat-bar-inner" style="width: ${pct}%"></div></div>
+        <span class="stat-value">${stats.kldi_avg_improvement.toFixed(4)}</span>
+      `;
+      statsCharts.appendChild(row);
+    }
+
+    // Human vs. KI Paare (zwei Balken, relativ zur Gesamtzahl)
+    if (
+      typeof stats.human_human_count === 'number' &&
+      typeof stats.human_ki_count === 'number' &&
+      (stats.human_human_count > 0 || stats.human_ki_count > 0)
+    ) {
+      const total = stats.human_human_count + stats.human_ki_count;
+      const humanPct = Math.round((stats.human_human_count / total) * 100);
+      const kiPct = Math.round((stats.human_ki_count / total) * 100);
+
+      const humanRow = document.createElement('div');
+      humanRow.className = 'stat-row';
+      humanRow.innerHTML = `
+        <span class="stat-label">Human→Human</span>
+        <div class="stat-bar"><div class="stat-bar-inner" style="width: ${humanPct}%"></div></div>
+        <span class="stat-value">${stats.human_human_count}</span>
+      `;
+      statsCharts.appendChild(humanRow);
+
+      const kiRow = document.createElement('div');
+      kiRow.className = 'stat-row';
+      kiRow.innerHTML = `
+        <span class="stat-label">Human→KI</span>
+        <div class="stat-bar"><div class="stat-bar-inner" style="width: ${kiPct}%"></div></div>
+        <span class="stat-value">${stats.human_ki_count}</span>
+      `;
+      statsCharts.appendChild(kiRow);
+    }
+  }
+
+  // Einfache grafische Darstellung: Balken pro Domäne basierend auf Dokumentanzahl
+  if (perDomainChart) {
+    perDomainChart.innerHTML = '';
+    if (summary.per_domain) {
+      const entries = Object.entries(summary.per_domain);
+      const maxCount = Math.max(
+        1,
+        ...entries.map(([, s]) => (typeof s.count === 'number' ? s.count : 0))
+      );
+
+      for (const [domain, stats] of entries) {
+        const count = typeof stats.count === 'number' ? stats.count : 0;
+        const pct = maxCount > 0 ? Math.round((count / maxCount) * 100) : 0;
+
+        const row = document.createElement('div');
+        row.className = 'per-domain-row';
+        row.innerHTML = `
+          <span class="per-domain-label">${escapeHtml(domain)}</span>
+          <div class="per-domain-bar">
+            <div class="per-domain-bar-inner" style="width: ${pct}%"></div>
+          </div>
+          <span class="per-domain-count">${count}</span>
+        `;
+        perDomainChart.appendChild(row);
+      }
+    }
+  }
 }
 
 startBtn.addEventListener('click', async () => {

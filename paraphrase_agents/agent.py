@@ -1,4 +1,5 @@
 from typing import Dict, List, Optional
+import difflib
 import numpy as np
 from nltk.tokenize import sent_tokenize
 import nltk
@@ -84,10 +85,24 @@ class ParaphraseAgent:
                     )
                     continue
 
-                # Avoid accepting outputs that are effectively identical to the input
-                if candidate == text or candidate.lower().strip() == text.lower().strip():
+                # Avoid accepting outputs that are effectively identical or almost
+                # identical to the input (z.B. nur minimale Leerzeichen-/Punkt-Änderungen)
+                orig_norm = " ".join(text.lower().split())
+                cand_norm = " ".join(candidate.lower().split())
+
+                # Exakt gleiche Normalform
+                if cand_norm == orig_norm:
                     print(
-                        f"Paraphrasing returned text identical to input (attempt {attempt}), retrying..."
+                        f"Paraphrasing returned text identical to input after normalization (attempt {attempt}), retrying..."
+                    )
+                    continue
+
+                # Zusätzlich eine sehr hohe Ähnlichkeitsschwelle, um quasi 1:1-Kopien
+                # auszufiltern (z.B. nur minimale Zeichensetzungsunterschiede)
+                similarity = difflib.SequenceMatcher(None, orig_norm, cand_norm).ratio()
+                if similarity >= 0.98:
+                    print(
+                        f"Paraphrasing returned text too similar to input (similarity={similarity:.3f}, attempt {attempt}), retrying..."
                     )
                     continue
 

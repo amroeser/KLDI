@@ -151,6 +151,87 @@
         transition: width 0.3s ease;
       }
 
+      .per-domain-chart {
+        margin-top: 0.5rem;
+      }
+
+      .per-domain-row {
+        display: flex;
+        align-items: center;
+        margin-bottom: 0.25rem;
+      }
+
+      .per-domain-label {
+        width: 80px;
+        font-size: 0.75rem;
+        color: #9ca3af;
+      }
+
+      .per-domain-bar {
+        flex: 1;
+        height: 0.4rem;
+        border-radius: 999px;
+        background: #020617;
+        overflow: hidden;
+        margin-left: 0.25rem;
+      }
+
+      .per-domain-bar-inner {
+        height: 100%;
+        width: 0;
+        border-radius: inherit;
+        background: linear-gradient(90deg, #38bdf8, #22c55e);
+      }
+
+      .per-domain-count {
+        width: 40px;
+        text-align: right;
+        font-size: 0.75rem;
+        margin-left: 0.25rem;
+      }
+
+      .stats-charts {
+        margin-top: 0.75rem;
+        border-top: 1px solid rgba(55, 65, 81, 0.8);
+        padding-top: 0.5rem;
+      }
+
+      .stat-row {
+        display: flex;
+        align-items: center;
+        margin-bottom: 0.3rem;
+        font-size: 0.8rem;
+      }
+
+      .stat-label {
+        width: 120px;
+        color: #e5e7eb;
+      }
+
+      .stat-bar {
+        flex: 1;
+        height: 0.4rem;
+        border-radius: 999px;
+        background: #020617;
+        overflow: hidden;
+        margin: 0 0.4rem;
+        border: 1px solid rgba(37, 99, 235, 0.6);
+      }
+
+      .stat-bar-inner {
+        height: 100%;
+        width: 0;
+        border-radius: inherit;
+        background: linear-gradient(90deg, #22c55e, #a855f7);
+      }
+
+      .stat-value {
+        width: 70px;
+        text-align: right;
+        color: #9ca3af;
+        font-size: 0.75rem;
+      }
+
       .error-box {
         margin-top: 0.75rem;
         padding: 0.5rem 0.7rem;
@@ -246,6 +327,8 @@
         <div class="progress-bar">
           <div id="progressBar" class="progress-bar-inner"></div>
         </div>
+        <div id="perDomainChart" class="per-domain-chart small"></div>
+        <div id="statsCharts" class="stats-charts small"></div>
         <p class="small">
           <a
             id="csvLink"

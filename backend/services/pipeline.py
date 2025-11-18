@@ -5,10 +5,12 @@ import random
 from collections import defaultdict
 from datetime import datetime
 from typing import Dict, List, Tuple
+import io
 
 import numpy as np
 import requests
 from bs4 import BeautifulSoup
+from pypdf import PdfReader
 from scipy.stats import mannwhitneyu
 from sklearn.metrics import roc_auc_score
 
@@ -33,10 +35,13 @@ MAX_SCRAPE_ATTEMPTS_FACTOR = 5
 def fetch_snippet_from_sources(sources: List[str]) -> Tuple[str, str]:
     """Fetch a real text snippet from the configured source URLs.
 
-    Es wird eine der konfigurierten Quellen per HTTP abgerufen und ein
-    Absatz aus dem HTML extrahiert. Der zurückgegebene Text landet als
-    `original_text` in der Tabelle, die Paraphrase ist anschließend der
-    OpenAI-Output zu genau diesem Ausschnitt.
+    Unterstützt sowohl HTML-Seiten als auch PDF-Dokumente.
+    - HTML: wir extrahieren Text aus <p>-Tags.
+    - PDF: wir extrahieren Fließtext aus den ersten Seiten.
+
+    Der zurückgegebene Text landet als `original_text` in der Tabelle,
+    die Paraphrase ist anschließend der OpenAI-Output zu genau diesem
+    Ausschnitt.
     """
     if not sources:
         return "", ""
@@ -48,34 +53,80 @@ def fetch_snippet_from_sources(sources: List[str]) -> Tuple[str, str]:
 
     for url in candidate_urls[:5]:
         try:
-            resp = requests.get(url, timeout=10)
-            if resp.status_code != 200 or "text" not in resp.headers.get("Content-Type", ""):
+            resp = requests.get(url, timeout=20)
+            if resp.status_code != 200:
                 continue
 
-            soup = BeautifulSoup(resp.text, "html.parser")
-            paragraphs = [
-                " ".join(p.get_text(separator=" ", strip=True).split())
-                for p in soup.find_all("p")
-            ]
+            content_type = resp.headers.get("Content-Type", "").lower()
 
-            # Filter auf sinnvolle Länge
-            candidates = [
-                p
-                for p in paragraphs
-                if MIN_PARAGRAPH_LENGTH <= len(p) <= MAX_PARAGRAPH_LENGTH
-            ]
+            # HTML / Text-Seiten
+            if "text/html" in content_type or "text/" in content_type:
+                soup = BeautifulSoup(resp.text, "html.parser")
+                paragraphs = [
+                    " ".join(p.get_text(separator=" ", strip=True).split())
+                    for p in soup.find_all("p")
+                ]
 
-            if not candidates:
-                # Fallback: ggf. längere Texte kürzen
-                for p in paragraphs:
-                    if len(p) > MIN_PARAGRAPH_LENGTH:
-                        candidates.append(p[:MAX_PARAGRAPH_LENGTH])
+                # Filter auf sinnvolle Länge
+                candidates = [
+                    p
+                    for p in paragraphs
+                    if MIN_PARAGRAPH_LENGTH <= len(p) <= MAX_PARAGRAPH_LENGTH
+                ]
 
-            if not candidates:
-                continue
+                if not candidates:
+                    # Fallback: ggf. längere Texte kürzen
+                    for p in paragraphs:
+                        if len(p) > MIN_PARAGRAPH_LENGTH:
+                            candidates.append(p[:MAX_PARAGRAPH_LENGTH])
 
-            snippet = random.choice(candidates)
-            return snippet, url
+                if not candidates:
+                    continue
+
+                snippet = random.choice(candidates)
+                return snippet, url
+
+            # PDF-Dokumente
+            if "application/pdf" in content_type or url.lower().endswith(".pdf"):
+                reader = PdfReader(io.BytesIO(resp.content))
+                texts: list[str] = []
+                # Nur die ersten paar Seiten auswerten, um Laufzeit zu begrenzen
+                for page in reader.pages[:5]:
+                    try:
+                        page_text = page.extract_text() or ""
+                    except Exception:
+                        page_text = ""
+                    if page_text:
+                        texts.append(page_text)
+
+                full_text = "\n".join(texts)
+                if not full_text.strip():
+                    continue
+
+                # Primitive Absatzbildung: nach Doppel-Umbrüchen oder Punkten splitten
+                raw_paragraphs = [
+                    " ".join(part.strip().split())
+                    for part in full_text.replace("\r", "\n").split("\n\n")
+                ]
+
+                paragraphs = [p for p in raw_paragraphs if p]
+
+                candidates = [
+                    p
+                    for p in paragraphs
+                    if MIN_PARAGRAPH_LENGTH <= len(p) <= MAX_PARAGRAPH_LENGTH
+                ]
+
+                if not candidates:
+                    for p in paragraphs:
+                        if len(p) > MIN_PARAGRAPH_LENGTH:
+                            candidates.append(p[:MAX_PARAGRAPH_LENGTH])
+
+                if not candidates:
+                    continue
+
+                snippet = random.choice(candidates)
+                return snippet, url
         except Exception:
             # Bei Netzwerk-/Parsingfehlern einfach die nächste Quelle probieren
             continue
@@ -231,24 +282,20 @@ def process_run_job(run_id: str, domain_slugs: List[str] | None = None) -> None:
             return
 
         # Prüfe, ob alle ausgewählten Domains mindestens ein Dokument liefern konnten.
-        # Wenn nicht, markieren wir den Run als fehlgeschlagen, damit klar ist,
-        # dass bestimmte Themenfelder nicht ausgewertet wurden.
+        # Wenn einzelne Domains keine Dokumente liefern (z.B. wegen toter Links oder
+        # nicht auswertbarer PDFs), vermerken wir das als Warnung im Summary, lassen
+        # den Run aber weiterlaufen, solange insgesamt Dokumente vorhanden sind.
         missing_domains = [d.slug for d in active_domains if domain_stats[d.slug]["count"] == 0]
-        if missing_domains:
-            run.status = RunStatus.FAILED
-            run.summary = {
-                "stage": "failed",
-                "error": (
+        if missing_domains and total_created > 0:
+            if isinstance(run.summary, dict):
+                warnings = run.summary.get("warnings") or []
+                warnings.append(
                     "No documents processed for domains: "
                     + ", ".join(sorted(missing_domains))
-                ),
-                "documents_processed": total_created,
-                "processed": total_created,
-                "expected": run.requested_count,
-                "domains": [d.slug for d in active_domains],
-            }
-            session.commit()
-            return
+                )
+                run.summary["warnings"] = warnings
+                run.summary["missing_domains"] = missing_domains
+                session.commit()
 
         # Baseline Human→Human KLDI und statistische Tests
         run.summary = {
