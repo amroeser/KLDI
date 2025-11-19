@@ -8,6 +8,7 @@ const summaryEl = document.getElementById('summaryJson');
 const rowsBody = document.getElementById('rowsBody');
 const csvLink = document.getElementById('csvLink');
 const jsonSummaryLink = document.getElementById('jsonSummaryLink');
+const reportLink = document.getElementById('reportLink');
 const domainsContainer = document.getElementById('domainsContainer');
 const interpretationEl = document.getElementById('interpretationText');
 const llmInterpretationEl = document.getElementById('llmInterpretationText');
@@ -35,6 +36,18 @@ const envSaveBtn = document.getElementById('envSaveBtn');
 
 let currentRunId = null;
 let pollTimer = null;
+
+if (reportLink) {
+  reportLink.addEventListener('click', (event) => {
+    if (!currentRunId) {
+      event.preventDefault();
+      return;
+    }
+    const url = `${API_BASE}/runs/${currentRunId}/report`;
+    event.preventDefault();
+    window.open(url, '_blank');
+  });
+}
 
 async function loadDomains() {
   try {
@@ -171,6 +184,7 @@ function renderRunList(items) {
             <button type="button" class="primary small-btn" data-action="view" data-run-id="${id}">Anzeigen</button>
             <button type="button" class="primary small-btn" data-action="csv" data-run-id="${id}">CSV</button>
             <button type="button" class="primary small-btn" data-action="json" data-run-id="${id}">JSON</button>
+            <button type="button" class="primary small-btn" data-action="report" data-run-id="${id}">Report</button>
             <button type="button" class="primary small-btn" data-action="delete" data-run-id="${id}">Löschen</button>
           </td>
         </tr>
@@ -216,6 +230,8 @@ async function handleRunListAction(action, runId) {
     window.open(`${API_BASE}/runs/${runId}/export?format=csv`, '_blank');
   } else if (action === 'json') {
     window.open(`${API_BASE}/runs/${runId}/summary_export`, '_blank');
+  } else if (action === 'report') {
+    window.open(`${API_BASE}/runs/${runId}/report`, '_blank');
   } else if (action === 'delete') {
     const confirmed = window.confirm('Diesen Run wirklich löschen?');
     if (!confirmed) return;
@@ -250,6 +266,11 @@ async function loadRunById(runId) {
     runIdEl.textContent = runId;
     csvLink.href = `${API_BASE}/runs/${runId}/export?format=csv`;
     jsonSummaryLink.href = `${API_BASE}/runs/${runId}/summary_export`;
+    if (reportLink) {
+      reportLink.href = `${API_BASE}/runs/${runId}/report`;
+      reportLink.style.pointerEvents = 'auto';
+      reportLink.style.opacity = '';
+    }
     if (pollTimer) {
       clearInterval(pollTimer);
       pollTimer = null;
@@ -516,6 +537,11 @@ startBtn.addEventListener('click', async () => {
     }
     csvLink.href = `${API_BASE}/runs/${data.id}/export?format=csv`;
     jsonSummaryLink.href = `${API_BASE}/runs/${data.id}/summary_export`;
+    if (reportLink) {
+      reportLink.href = `${API_BASE}/runs/${data.id}/report`;
+      reportLink.style.pointerEvents = 'none';
+      reportLink.style.opacity = '0.5';
+    }
     pollRunStatus();
   } catch (err) {
     console.error(err);
@@ -628,6 +654,19 @@ function updateStatus(run) {
     errorBox.textContent = `Fehler: ${summary.error || 'Unbekannter Fehler im Backend'}`;
   } else {
     errorBox.style.display = 'none';
+  }
+
+  if (reportLink) {
+    const isCompleted = String(run.status || '').toLowerCase() === 'completed';
+    if (currentRunId && isCompleted) {
+      reportLink.href = `${API_BASE}/runs/${currentRunId}/report`;
+      reportLink.style.pointerEvents = 'auto';
+      reportLink.style.opacity = '';
+    } else {
+      reportLink.href = '#';
+      reportLink.style.pointerEvents = 'none';
+      reportLink.style.opacity = '0.5';
+    }
   }
 }
 

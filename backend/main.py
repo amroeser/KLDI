@@ -21,6 +21,7 @@ from .schemas import (
 from .services import results as results_service
 from .services import runs as run_service
 from .services import env_config as env_config_service
+from .services import report_markdown as report_markdown_service
 
 
 app = FastAPI(title="Windsurf Paraphrasing Backend")
@@ -120,6 +121,28 @@ def export_run_summary(run_id: str, db: Session = Depends(get_db)):
         content=json_data,
         media_type="application/json",
         headers={"Content-Disposition": f"attachment; filename=run_{run_id}_summary.json"},
+    )
+
+
+@app.get("/runs/{run_id}/report")
+def export_run_report(run_id: str, db: Session = Depends(get_db)):
+    """Export an academic-style Markdown report for a run.
+
+    The report follows the methodology described in the project README and
+    is intended for use in scientific or technical documentation.
+    """
+    run = run_service.get_run(db, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    if not run.summary:
+        raise HTTPException(status_code=400, detail="Run has no summary yet")
+
+    markdown = report_markdown_service.generate_run_markdown_report(db, run_id)
+    return Response(
+        content=markdown,
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename=run_{run_id}_report.md"},
     )
 
 
