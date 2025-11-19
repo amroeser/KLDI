@@ -17,6 +17,7 @@ class RunSummary(BaseModel):
     requested_count: int
     per_domain_count: int
     llm_model: str
+    temperature: float
     created_at: datetime
     updated_at: datetime
 

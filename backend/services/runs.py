@@ -64,3 +64,19 @@ def list_runs(db: Session) -> Tuple[list[Run], int]:
 
 def get_run(db: Session, run_id: str) -> Run | None:
     return db.query(Run).filter(Run.id == run_id).first()
+
+
+def delete_run(db: Session, run_id: str) -> bool:
+    """Delete a run and all associated data.
+
+    Thanks to the cascading relationships on the SQLAlchemy models,
+    associated Documents, Paraphrases und Evaluations werden automatisch
+    mitgelöscht.
+    """
+
+    run = get_run(db, run_id)
+    if not run:
+        return False
+    db.delete(run)
+    db.commit()
+    return True

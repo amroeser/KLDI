@@ -17,6 +17,8 @@ const progressBar = document.getElementById('progressBar');
 const errorBox = document.getElementById('errorBox');
 const perDomainChart = document.getElementById('perDomainChart');
 const statsCharts = document.getElementById('statsCharts');
+const runsListContainer = document.getElementById('runsList');
+const runModelInfoEl = document.getElementById('runModelInfo');
 const envPanelHeader = document.getElementById('envPanelHeader');
 const envPanelToggle = document.getElementById('envPanelToggle');
 const envPanelBody = document.getElementById('envPanelBody');
@@ -69,6 +71,9 @@ async function loadDomains() {
 // Domänen direkt beim Laden der Seite holen
 loadDomains();
 
+// Vergangene Runs beim Laden holen
+loadRunList();
+
 // .env-Konfiguration laden
 async function loadEnvConfig() {
   if (!envPanelBody) return;
@@ -105,6 +110,153 @@ if (envPanelHeader && envPanelBody && envPanelToggle) {
       loadEnvConfig();
     }
   });
+}
+
+async function loadRunList() {
+  if (!runsListContainer) return;
+  try {
+    runsListContainer.textContent = 'Lade vergangene Runs...';
+    const res = await fetch(`${API_BASE}/runs`);
+    if (!res.ok) throw new Error('Fehler beim Laden der Runs');
+    const data = await res.json();
+    const items = Array.isArray(data.items) ? data.items : [];
+    if (!items.length) {
+      runsListContainer.textContent = 'Noch keine Runs vorhanden.';
+      return;
+    }
+    renderRunList(items.slice(0, 20));
+  } catch (err) {
+    console.error(err);
+    runsListContainer.textContent = 'Fehler beim Laden der Runs.';
+  }
+}
+
+function renderRunList(items) {
+  if (!runsListContainer) return;
+
+  const rowsHtml = items
+    .map((run) => {
+      const id = escapeHtml(run.id);
+      const status = String(run.status || '');
+      const statusLower = status.toLowerCase();
+      const created = run.created_at ? new Date(run.created_at).toLocaleString() : '';
+      const count =
+        typeof run.requested_count === 'number' ? String(run.requested_count) : '';
+      const model = run.llm_model ? String(run.llm_model) : '';
+      const temp =
+        typeof run.temperature === 'number' ? String(run.temperature) : '';
+
+      return `
+        <tr data-run-id="${id}">
+          <td class="mono small">${id}</td>
+          <td class="small">${escapeHtml(created)}</td>
+          <td><span class="badge ${escapeHtml(statusLower)}">${escapeHtml(
+        status
+      )}</span></td>
+          <td class="small">${escapeHtml(count)}</td>
+          <td class="small">${escapeHtml(model)}</td>
+          <td class="small">${escapeHtml(temp)}</td>
+          <td class="small">
+            <button type="button" class="primary small-btn" data-action="view" data-run-id="${id}">Anzeigen</button>
+            <button type="button" class="primary small-btn" data-action="csv" data-run-id="${id}">CSV</button>
+            <button type="button" class="primary small-btn" data-action="json" data-run-id="${id}">JSON</button>
+            <button type="button" class="primary small-btn" data-action="delete" data-run-id="${id}">Löschen</button>
+          </td>
+        </tr>
+      `;
+    })
+    .join('');
+
+  runsListContainer.innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th class="small">Run-ID</th>
+          <th>Erstellt</th>
+          <th>Status</th>
+          <th>Texte</th>
+          <th>Modell</th>
+          <th>Temp</th>
+          <th>Aktionen</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rowsHtml}
+      </tbody>
+    </table>
+  `;
+
+  const buttons = runsListContainer.querySelectorAll('button[data-run-id]');
+  buttons.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const action = btn.dataset.action;
+      const runId = btn.dataset.runId;
+      handleRunListAction(action, runId);
+    });
+  });
+}
+
+async function handleRunListAction(action, runId) {
+  if (!runId) return;
+
+  if (action === 'view') {
+    await loadRunById(runId);
+  } else if (action === 'csv') {
+    window.open(`${API_BASE}/runs/${runId}/export?format=csv`, '_blank');
+  } else if (action === 'json') {
+    window.open(`${API_BASE}/runs/${runId}/summary_export`, '_blank');
+  } else if (action === 'delete') {
+    const confirmed = window.confirm('Diesen Run wirklich löschen?');
+    if (!confirmed) return;
+    try {
+      const res = await fetch(`${API_BASE}/runs/${runId}`, { method: 'DELETE' });
+      if (!res.ok && res.status !== 204) {
+        throw new Error('Fehler beim Löschen');
+      }
+      if (currentRunId === runId) {
+        currentRunId = null;
+        runIdEl.textContent = '–';
+        summaryEl.textContent = '–';
+        interpretationEl.textContent = '–';
+        if (llmInterpretationEl) llmInterpretationEl.textContent = '–';
+        if (runModelInfoEl) runModelInfoEl.textContent = 'Modell: –';
+        progressText.textContent = '–';
+        progressBar.style.width = '0%';
+        rowsBody.innerHTML =
+          '<tr><td colspan="10" class="small">Noch keine Ergebnisse.</td></tr>';
+      }
+      await loadRunList();
+    } catch (err) {
+      console.error(err);
+      window.alert('Fehler beim Löschen des Runs.');
+    }
+  }
+}
+
+async function loadRunById(runId) {
+  try {
+    currentRunId = runId;
+    runIdEl.textContent = runId;
+    csvLink.href = `${API_BASE}/runs/${runId}/export?format=csv`;
+    jsonSummaryLink.href = `${API_BASE}/runs/${runId}/summary_export`;
+    if (pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
+    const res = await fetch(`${API_BASE}/runs/${runId}`);
+    if (!res.ok) throw new Error('Run nicht gefunden');
+    const data = await res.json();
+    if (runModelInfoEl) {
+      const tempLabel =
+        typeof data.temperature === 'number' ? String(data.temperature) : '–';
+      runModelInfoEl.textContent = `Modell: ${data.llm_model || '–'} (Temp: ${tempLabel})`;
+    }
+    updateStatus(data);
+    await loadRows();
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = 'Fehler beim Laden des ausgewählten Runs.';
+  }
 }
 
 if (envSaveBtn) {
@@ -346,6 +498,11 @@ startBtn.addEventListener('click', async () => {
     const data = await res.json();
     currentRunId = data.id;
     runIdEl.textContent = data.id;
+    if (runModelInfoEl) {
+      const tempLabel =
+        typeof data.temperature === 'number' ? String(data.temperature) : '–';
+      runModelInfoEl.textContent = `Modell: ${data.llm_model || '–'} (Temp: ${tempLabel})`;
+    }
     csvLink.href = `${API_BASE}/runs/${data.id}/export?format=csv`;
     jsonSummaryLink.href = `${API_BASE}/runs/${data.id}/summary_export`;
     pollRunStatus();

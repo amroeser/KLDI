@@ -83,6 +83,14 @@ def get_run(run_id: str, db: Session = Depends(get_db)):
     return RunDetail.model_validate(run)
 
 
+@app.delete("/runs/{run_id}", status_code=204)
+def delete_run(run_id: str, db: Session = Depends(get_db)):
+    deleted = run_service.delete_run(db, run_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return Response(status_code=204)
+
+
 @app.get("/runs/{run_id}/rows", response_model=list[DocumentRow])
 def get_run_rows(run_id: str, db: Session = Depends(get_db)):
     rows = results_service.get_run_rows(db, run_id)
