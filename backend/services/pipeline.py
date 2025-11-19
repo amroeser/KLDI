@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import itertools
+import os
 import random
 from collections import defaultdict
 from datetime import datetime
 from typing import Dict, List, Tuple
 import io
+
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
 import requests
@@ -37,6 +40,12 @@ MIN_ROBUST_SAMPLE_SIZE = 30
 
 # Anzahl Bootstrap-Samples für Konfidenzintervalle
 BOOTSTRAP_SAMPLES = 200
+
+# Intra-Run-Parallelität (Anzahl gleichzeitiger Dokumente)
+try:
+    PARALLELISM = max(1, int(os.getenv("PARALLELISM", "10")))
+except ValueError:  # Fallback bei ungültigem Wert
+    PARALLELISM = 10
 
 
 def fetch_snippet_from_sources(sources: List[str]) -> Tuple[str, str]:
@@ -142,6 +151,46 @@ def fetch_snippet_from_sources(sources: List[str]) -> Tuple[str, str]:
     return "", ""
 
 
+def _paraphrase_and_score(
+    snippet: str,
+    paraphraser: ParaphraseAgent,
+    evaluator: KLDEvaluator,
+) -> Dict[str, object] | None:
+    """Führe die iterative Paraphrasierung und KLDI-Bewertung für ein Dokument durch.
+
+    Diese Funktion ist thread-fähig und berührt keine Datenbankobjekte; sie kann
+    daher gefahrlos im ThreadPoolExecutor ausgeführt werden.
+    """
+
+    best_paraphrase_text: str | None = None
+    best_kld: float = float("inf")
+    initial_kld: float | None = None
+    iterations_used = 0
+
+    for iteration in range(1, MAX_PARAPHRASE_ITERATIONS + 1):
+        paraphrase_text = paraphraser.paraphrase(snippet)
+        kld_value = evaluator.calculate_kld(snippet, paraphrase_text)
+
+        if initial_kld is None:
+            initial_kld = kld_value
+
+        if kld_value < best_kld:
+            best_kld = kld_value
+            best_paraphrase_text = paraphrase_text
+
+        iterations_used = iteration
+
+    if best_paraphrase_text is None:
+        return None
+
+    return {
+        "best_paraphrase_text": best_paraphrase_text,
+        "best_kld": float(best_kld),
+        "initial_kld": float(initial_kld) if initial_kld is not None else None,
+        "iterations_used": iterations_used,
+    }
+
+
 def process_run_job(run_id: str, domain_slugs: List[str] | None = None) -> None:
     session = SessionLocal()
     try:
@@ -156,6 +205,7 @@ def process_run_job(run_id: str, domain_slugs: List[str] | None = None) -> None:
             "stage": "initializing",
             "processed": 0,
             "expected": run.requested_count,
+            "parallelism": PARALLELISM,
         }
         session.commit()
 
@@ -188,93 +238,112 @@ def process_run_job(run_id: str, domain_slugs: List[str] | None = None) -> None:
         attempts = 0
         domain_cycle = itertools.cycle(active_domains)
 
-        while total_created < run.requested_count and attempts < max_attempts:
-            domain = next(domain_cycle)
-            attempts += 1
+        # Parallelisierte Verarbeitung von Dokumenten in Batches
+        with ThreadPoolExecutor(max_workers=PARALLELISM) as executor:
+            while total_created < run.requested_count and attempts < max_attempts:
+                futures: Dict[object, Tuple[Document, str, str]] = {}
 
-            snippet, source_url = fetch_snippet_from_sources(domain.sources)
-            if not snippet:
-                continue
+                # Baue einen Batch von bis zu PARALLELISM Dokumenten
+                while (
+                    len(futures) < PARALLELISM
+                    and total_created + len(futures) < run.requested_count
+                    and attempts < max_attempts
+                ):
+                    domain = next(domain_cycle)
+                    attempts += 1
 
-            document = Document(
-                run_id=run.id,
-                domain=domain.slug,
-                source_url=source_url,
-                retrieved_at=datetime.utcnow(),
-                original_text=snippet,
-            )
-            session.add(document)
-            session.flush()
+                    snippet, source_url = fetch_snippet_from_sources(domain.sources)
+                    if not snippet:
+                        continue
 
-            # Iterative Paraphrasierung mit KLDI-Minimierung
-            best_paraphrase_text = None
-            best_kld = float("inf")
-            initial_kld = None
-            iterations_used = 0
+                    document = Document(
+                        run_id=run.id,
+                        domain=domain.slug,
+                        source_url=source_url,
+                        retrieved_at=datetime.utcnow(),
+                        original_text=snippet,
+                    )
+                    session.add(document)
+                    session.flush()
 
-            for iteration in range(1, MAX_PARAPHRASE_ITERATIONS + 1):
-                paraphrase_text = paraphraser.paraphrase(snippet)
-                kld_value = evaluator.calculate_kld(snippet, paraphrase_text)
+                    future = executor.submit(
+                        _paraphrase_and_score,
+                        snippet,
+                        paraphraser,
+                        evaluator,
+                    )
+                    futures[future] = (document, domain.slug, snippet)
 
-                if initial_kld is None:
-                    initial_kld = kld_value
+                if not futures:
+                    # Keine weiteren Snippets konnten gewonnen werden
+                    break
 
-                if kld_value < best_kld:
-                    best_kld = kld_value
-                    best_paraphrase_text = paraphrase_text
+                # Ergebnisse einsammeln und in der DB speichern
+                for future in as_completed(futures):
+                    document, domain_slug, snippet = futures[future]
+                    try:
+                        result = future.result()
+                    except Exception:
+                        # Paraphrasierung fehlgeschlagen -> Dokument verwerfen
+                        session.delete(document)
+                        session.flush()
+                        continue
 
-                iterations_used = iteration
+                    if not result:
+                        session.delete(document)
+                        session.flush()
+                        continue
 
-            # Fallback: sollte aus irgendeinem Grund kein Paraphrase gefunden worden sein,
-            # brechen wir diesen Durchlauf ab.
-            if best_paraphrase_text is None:
-                continue
+                    best_paraphrase_text = result["best_paraphrase_text"]
+                    best_kld = float(result["best_kld"])
+                    initial_kld = result["initial_kld"]
+                    iterations_used = int(result["iterations_used"])
 
-            session.add(
-                Paraphrase(
-                    document_id=document.id,
-                    llm_model=run.llm_model,
-                    temperature=run.temperature,
-                    paraphrased_text=best_paraphrase_text,
-                )
-            )
+                    session.add(
+                        Paraphrase(
+                            document_id=document.id,
+                            llm_model=run.llm_model,
+                            temperature=run.temperature,
+                            paraphrased_text=best_paraphrase_text,
+                        )
+                    )
 
-            # Evaluation mit Speicherung von initialem und bestem KLDI
-            token_stats = {
-                "length_original": len(snippet.split()),
-                "length_paraphrase": len(best_paraphrase_text.split()),
-            }
-            if initial_kld is not None:
-                token_stats["kldi_initial"] = float(initial_kld)
-            token_stats["kldi_best"] = float(best_kld)
-            token_stats["iterations"] = iterations_used
+                    token_stats = {
+                        "length_original": len(snippet.split()),
+                        "length_paraphrase": len(best_paraphrase_text.split()),
+                        "iterations": iterations_used,
+                    }
+                    if initial_kld is not None:
+                        token_stats["kldi_initial"] = float(initial_kld)
+                    token_stats["kldi_best"] = float(best_kld)
 
-            session.add(
-                Evaluation(
-                    document_id=document.id,
-                    kldi=best_kld,
-                    token_stats=token_stats,
-                    classification="human-like",  # Platzhalter; finale Klassifikation folgt später
-                )
-            )
+                    session.add(
+                        Evaluation(
+                            document_id=document.id,
+                            kldi=best_kld,
+                            token_stats=token_stats,
+                            classification="human-like",  # Platzhalter; finale Klassifikation folgt später
+                        )
+                    )
 
-            total_created += 1
-            hk_values.append(best_kld)
-            if initial_kld is not None:
-                hk_initial_values.append(initial_kld)
-            stats = domain_stats[domain.slug]
-            stats["count"] += 1
-            stats["kldi_sum"] += best_kld
-            stats["human_like"] += 1
+                    total_created += 1
+                    hk_values.append(best_kld)
+                    if initial_kld is not None:
+                        hk_initial_values.append(initial_kld)
+                    stats = domain_stats[domain_slug]
+                    stats["count"] += 1
+                    stats["kldi_sum"] += best_kld
+                    stats["human_like"] += 1
 
-            # Fortschritt grob aktualisieren (nicht bei jedem einzelnen Dokument committen)
-            if total_created % 10 == 0:
-                run.summary = {
-                    "stage": "processing",
-                    "processed": total_created,
-                    "expected": run.requested_count,
-                }
-                session.commit()
+                    # Fortschritt grob aktualisieren (nicht bei jedem einzelnen Dokument committen)
+                    if total_created % 10 == 0:
+                        run.summary = {
+                            "stage": "processing",
+                            "processed": total_created,
+                            "expected": run.requested_count,
+                            "parallelism": PARALLELISM,
+                        }
+                        session.commit()
 
         # Wenn wir trotz mehrfacher Versuche nicht genug Dokumente erzeugen konnten, schlagen wir fehl.
         if total_created < run.requested_count:
@@ -309,6 +378,7 @@ def process_run_job(run_id: str, domain_slugs: List[str] | None = None) -> None:
             "stage": "computing_stats",
             "processed": total_created,
             "expected": run.requested_count,
+            "parallelism": PARALLELISM,
         }
         session.commit()
         hh_values: List[float] = []
@@ -463,6 +533,7 @@ def process_run_job(run_id: str, domain_slugs: List[str] | None = None) -> None:
                 "kldi_median_diff": kldi_median_diff,
                 "kldi_median_diff_ci": kldi_median_diff_ci,
                 "robust_sample_sizes": robust_samples,
+                "parallelism": PARALLELISM,
             }
 
         # Finale Klassifikation mit adaptiver Schwelle, falls vorhanden
@@ -510,6 +581,20 @@ def process_run_job(run_id: str, domain_slugs: List[str] | None = None) -> None:
                     "in dieser Stichprobe nicht möglich."
                 )
 
+        # Per-Domain-Zusammenfassung vorbereiten (für LLM und finale Summary)
+        if total_created > 0:
+            per_domain_summary = {
+                domain: {
+                    "count": stats["count"],
+                    "avg_kld": stats["kldi_sum"] / stats["count"] if stats["count"] else 0.0,
+                    "human_like": stats["human_like"],
+                    "detectable": stats["detectable"],
+                }
+                for domain, stats in domain_stats.items()
+            }
+        else:
+            per_domain_summary = {}
+
         # LLM-basierte Zusammenfassung der Statistik (optional)
         llm_summary: str | None = None
         try:
@@ -548,15 +633,6 @@ def process_run_job(run_id: str, domain_slugs: List[str] | None = None) -> None:
                 else None,
             }
         else:
-            per_domain_summary = {
-                domain: {
-                    "count": stats["count"],
-                    "avg_kld": stats["kldi_sum"] / stats["count"] if stats["count"] else 0.0,
-                    "human_like": stats["human_like"],
-                    "detectable": stats["detectable"],
-                }
-                for domain, stats in domain_stats.items()
-            }
             run.status = RunStatus.COMPLETED
             run.summary = {
                 "stage": "completed",

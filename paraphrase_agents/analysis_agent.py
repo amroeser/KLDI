@@ -43,17 +43,22 @@ class AnalysisAgent:
             "Du erhältst numerische Kennzahlen einer Studie zur Erkennbarkeit von KI-Texten "
             "(KLDI-Verteilungen, AUC, p-Wert, Effektstärken, Konfidenzintervalle). "
             "Formuliere eine kurze Zusammenfassung auf Deutsch (maximal 2–3 Sätze), "
-            "die die Robustheit der Ergebnisse einordnet. Erwähne insbesondere, ob die "
-            "Stichprobengrößen ausreichend sind, ob der Effekt eher klein/ mittel/ groß ist "
-            "und ob die Aussage eher explorativ oder robust ist. Verwende eine sachliche, "
-            "wissenschaftlich klingende Sprache ohne Aufzählungen oder Überschriften."
+            "die die Robustheit der Ergebnisse einordnet. Erwähne explizit, ob KI-Texte in "
+            "dieser Stichprobe anhand des KLDI klar erkennbar sind oder nicht (z.B. \"nicht "
+            "zuverlässig unterscheidbar\"), und stütze dich dabei auf AUC, p-Wert, "
+            "Stichprobengrößen und Effektstärken. Erwähne außerdem, ob die Stichprobengrößen "
+            "ausreichend sind, ob der Effekt eher klein/ mittel/ groß ist und ob die Aussage "
+            "eher explorativ oder robust ist. Verwende eine sachliche, wissenschaftlich "
+            "klingende Sprache ohne Aufzählungen oder Überschriften."
         )
 
         user_prompt = (
             "Hier sind die Ergebnisse als Python-Dictionary:\n"
             f"{content_dict}\n\n"
             "Erstelle jetzt die beschriebene Zusammenfassung. Antworte nur mit dem Fließtext, "
-            "ohne Aufzählungen und ohne weitere Erklärungen über den Prompt."
+            "ohne Aufzählungen und ohne weitere Erklärungen über den Prompt. Stelle klar, ob "
+            "KI-Texte in dieser konkreten Stichprobe anhand des KLDI (inkl. AUC/p-Wert) als "
+            "erkennbar gelten können oder nicht."
         )
 
         response = self.client.chat.completions.create(
