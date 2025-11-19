@@ -1,6 +1,8 @@
 from typing import Dict, List, Optional
 import difflib
 import numpy as np
+import os
+from concurrent.futures import ThreadPoolExecutor
 from nltk.tokenize import sent_tokenize
 import nltk
 
@@ -139,7 +141,23 @@ class ParaphraseAgent:
         Returns:
             List of paraphrased texts
         """
-        return [self.paraphrase(text, style) for text in texts]
+        if not texts:
+            return []
+
+        try:
+            max_workers_env = int(os.getenv("PARAPHRASE_BATCH_PARALLELISM", "4"))
+            max_workers = max(1, max_workers_env)
+        except ValueError:
+            max_workers = 4
+
+        max_workers = min(max_workers, len(texts))
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(self.paraphrase, text, style) for text in texts]
+            results: List[str] = []
+            for future in futures:
+                results.append(future.result())
+        return results
 
     def split_into_sentences(self, text: str) -> List[str]:
         """

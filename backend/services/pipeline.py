@@ -29,7 +29,10 @@ MIN_PARAGRAPH_LENGTH = 80
 MAX_PARAGRAPH_LENGTH = 220
 
 # How many paraphrasing refinement steps per Dokument maximal
-MAX_PARAPHRASE_ITERATIONS = 5
+try:
+    MAX_PARAPHRASE_ITERATIONS = max(1, int(os.getenv("MAX_PARAPHRASE_ITERATIONS", "5")))
+except ValueError:
+    MAX_PARAPHRASE_ITERATIONS = 5
 
 # Wie oft wir höchstens versuchen, Snippets zu scrapen (Faktor * requested_count),
 # bevor der Run als fehlgeschlagen gilt

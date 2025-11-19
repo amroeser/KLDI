@@ -1,5 +1,7 @@
 from typing import List, Dict, Any, Optional
 import numpy as np
+import os
+from concurrent.futures import ThreadPoolExecutor
 from .agent import ParaphraseAgent
 from .evaluator import KLDEvaluator
 import time
@@ -120,4 +122,23 @@ class ParaphraseOrchestrator:
     
     def batch_paraphrase(self, texts: List[str], **kwargs) -> List[Dict[str, Any]]:
         """Paraphrase multiple texts in parallel."""
-        return [self.paraphrase_with_feedback_loop(text, **kwargs) for text in texts]
+        if not texts:
+            return []
+
+        try:
+            max_workers_env = int(os.getenv("ORCHESTRATOR_BATCH_PARALLELISM", "4"))
+            max_workers = max(1, max_workers_env)
+        except ValueError:
+            max_workers = 4
+
+        max_workers = min(max_workers, len(texts))
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [
+                executor.submit(self.paraphrase_with_feedback_loop, text, **kwargs)
+                for text in texts
+            ]
+            results: List[Dict[str, Any]] = []
+            for future in futures:
+                results.append(future.result())
+        return results
