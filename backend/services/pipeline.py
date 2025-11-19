@@ -19,6 +19,7 @@ from ..domains import DOMAINS
 from ..models import Document, Evaluation, Paraphrase, Run, RunStatus
 from paraphrase_agents.agent import ParaphraseAgent
 from paraphrase_agents.evaluator import KLDEvaluator
+from paraphrase_agents.analysis_agent import AnalysisAgent
 
 # Snippet length configuration
 MIN_PARAGRAPH_LENGTH = 80
@@ -509,6 +510,27 @@ def process_run_job(run_id: str, domain_slugs: List[str] | None = None) -> None:
                     "in dieser Stichprobe nicht möglich."
                 )
 
+        # LLM-basierte Zusammenfassung der Statistik (optional)
+        llm_summary: str | None = None
+        try:
+            # Nur versuchen, wenn Statistiken vorhanden sind und das LLM verfügbar ist
+            if stats_summary:
+                analysis_agent = AnalysisAgent(model=run.llm_model)
+                meta_info = {
+                    "requested_count": run.requested_count,
+                    "documents_processed": total_created,
+                    "domains": [d.slug for d in active_domains],
+                }
+                llm_summary = analysis_agent.summarize_run(
+                    stats=stats_summary,
+                    per_domain=per_domain_summary,
+                    meta=meta_info,
+                )
+        except Exception:
+            # LLM-Zusammenfassung ist optional; bei Fehlern bleiben wir bei der
+            # regelbasierten Interpretation.
+            llm_summary = None
+
         if total_created == 0:
             run.status = RunStatus.FAILED
             run.summary = {
@@ -518,7 +540,12 @@ def process_run_job(run_id: str, domain_slugs: List[str] | None = None) -> None:
                 "processed": 0,
                 "expected": run.requested_count,
                 "domains": [d.slug for d in active_domains],
-                "analysis": {"interpretation": interpretation} if interpretation else None,
+                "analysis": {
+                    "interpretation": interpretation,
+                    "llm_summary": llm_summary,
+                }
+                if interpretation or llm_summary
+                else None,
             }
         else:
             per_domain_summary = {
@@ -539,7 +566,10 @@ def process_run_job(run_id: str, domain_slugs: List[str] | None = None) -> None:
                 "domains": [d.slug for d in active_domains],
                 "per_domain": per_domain_summary,
                 "stats": stats_summary,
-                "analysis": {"interpretation": interpretation},
+                "analysis": {
+                    "interpretation": interpretation,
+                    "llm_summary": llm_summary,
+                },
             }
         session.commit()
     except Exception as exc:  # pragma: no cover

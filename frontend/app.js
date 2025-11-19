@@ -10,6 +10,7 @@ const csvLink = document.getElementById('csvLink');
 const jsonSummaryLink = document.getElementById('jsonSummaryLink');
 const domainsContainer = document.getElementById('domainsContainer');
 const interpretationEl = document.getElementById('interpretationText');
+const llmInterpretationEl = document.getElementById('llmInterpretationText');
 const kldiStatsEl = document.getElementById('kldiStatsText');
 const progressText = document.getElementById('progressText');
 const progressBar = document.getElementById('progressBar');
@@ -406,10 +407,13 @@ function updateStatus(run) {
   };
   const stageLabel = stage ? (stageLabelMap[stage] || stage) : '–';
   statusEl.innerHTML = `Status: <span class="badge ${badgeClass}">${run.status}</span><br/><span class="small">Schritt: ${stageLabel}</span>`;
-  const interpretation = summary.analysis && summary.analysis.interpretation
-    ? summary.analysis.interpretation
-    : '–';
+  const analysis = summary.analysis || {};
+  const interpretation = analysis.interpretation || '–';
+  const llmInterpretation = analysis.llm_summary || '–';
   interpretationEl.textContent = interpretation;
+  if (llmInterpretationEl) {
+    llmInterpretationEl.textContent = llmInterpretation;
+  }
   renderSummary(summary);
 
   // Aggregierte KLDI-Iterationswerte (falls vorhanden)
