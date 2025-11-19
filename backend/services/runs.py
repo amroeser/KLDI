@@ -12,6 +12,7 @@ from ..domains import DOMAINS
 from ..models import Run, RunStatus
 from ..queue import default_queue
 from .pipeline import process_run_job
+from paraphrase_agents.config import get_default_model
 
 
 USE_ASYNC_QUEUE = os.getenv("USE_ASYNC_QUEUE", "0") == "1"
@@ -33,7 +34,7 @@ def create_run(db: Session, count: int, domains: List[str] | None = None) -> Run
     run = Run(
         requested_count=count,
         per_domain_count=per_domain,
-        llm_model="gpt-4.1",
+        llm_model=get_default_model(),
         temperature=0.1,
         status=RunStatus.PENDING,
         seed=seed,

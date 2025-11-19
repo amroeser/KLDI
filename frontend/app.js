@@ -19,6 +19,9 @@ const perDomainChart = document.getElementById('perDomainChart');
 const statsCharts = document.getElementById('statsCharts');
 const runsListContainer = document.getElementById('runsList');
 const runModelInfoEl = document.getElementById('runModelInfo');
+const runsPanelHeader = document.getElementById('runsPanelHeader');
+const runsPanelToggle = document.getElementById('runsPanelToggle');
+const runsPanelBody = document.getElementById('runsPanelBody');
 const envPanelHeader = document.getElementById('envPanelHeader');
 const envPanelToggle = document.getElementById('envPanelToggle');
 const envPanelBody = document.getElementById('envPanelBody');
@@ -109,6 +112,14 @@ if (envPanelHeader && envPanelBody && envPanelToggle) {
     if (!isOpen) {
       loadEnvConfig();
     }
+  });
+}
+
+if (runsPanelHeader && runsPanelBody && runsPanelToggle) {
+  runsPanelHeader.addEventListener('click', () => {
+    const isOpen = runsPanelBody.style.display === 'block';
+    runsPanelBody.style.display = isOpen ? 'none' : 'block';
+    runsPanelToggle.textContent = isOpen ? 'aufklappen' : 'zuklappen';
   });
 }
 
