@@ -21,8 +21,8 @@ pip install -r requirements.txt
 export PYTHONPATH="$ROOT_DIR"
 export DATABASE_URL="sqlite:///./data/app.db"
 export OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES
-# Use async Redis/RQ queue so POST /runs returns immediately with a Run ID
-export USE_ASYNC_QUEUE=1
+# Async Redis/RQ queue ist per Default aktiv, kann aber über .env überschrieben werden
+export USE_ASYNC_QUEUE="${USE_ASYNC_QUEUE:-1}"
 
 # Start Redis if available, else assume already running
 if command -v redis-server >/dev/null 2>&1; then

@@ -19,6 +19,11 @@ const errorBox = document.getElementById('errorBox');
 const perDomainChart = document.getElementById('perDomainChart');
 const statsCharts = document.getElementById('statsCharts');
 const runsListContainer = document.getElementById('runsList');
+const runCompareEl = document.getElementById('runCompare');
+const filterDomain = document.getElementById('filterDomain');
+const filterClass = document.getElementById('filterClass');
+const filterKldiMin = document.getElementById('filterKldiMin');
+const filterKldiMax = document.getElementById('filterKldiMax');
 const runModelInfoEl = document.getElementById('runModelInfo');
 const runsPanelHeader = document.getElementById('runsPanelHeader');
 const runsPanelToggle = document.getElementById('runsPanelToggle');
@@ -36,6 +41,8 @@ const envSaveBtn = document.getElementById('envSaveBtn');
 
 let currentRunId = null;
 let pollTimer = null;
+let allRows = [];
+let compareSelection = [];
 
 if (reportLink) {
   reportLink.addEventListener('click', (event) => {
@@ -47,6 +54,19 @@ if (reportLink) {
     event.preventDefault();
     window.open(url, '_blank');
   });
+}
+
+if (filterDomain) {
+  filterDomain.addEventListener('change', applyFiltersAndRenderRows);
+}
+if (filterClass) {
+  filterClass.addEventListener('change', applyFiltersAndRenderRows);
+}
+if (filterKldiMin) {
+  filterKldiMin.addEventListener('input', applyFiltersAndRenderRows);
+}
+if (filterKldiMax) {
+  filterKldiMax.addEventListener('input', applyFiltersAndRenderRows);
 }
 
 async function loadDomains() {
@@ -81,6 +101,202 @@ async function loadDomains() {
   } catch (err) {
     console.error(err);
     domainsContainer.textContent = 'Fehler beim Laden der Domänen.';
+  }
+}
+
+function applyFiltersAndRenderRows() {
+  if (!rowsBody) return;
+
+  if (!Array.isArray(allRows) || !allRows.length) {
+    rowsBody.innerHTML = '<tr><td colspan="7" class="small">Keine Zeilen gefunden.</td></tr>';
+    return;
+  }
+
+  const domainVal = filterDomain && filterDomain.value ? filterDomain.value : '';
+  const classVal = filterClass && filterClass.value ? filterClass.value : '';
+
+  let kldiMin = null;
+  let kldiMax = null;
+  if (filterKldiMin && filterKldiMin.value !== '') {
+    const v = Number(filterKldiMin.value);
+    if (!Number.isNaN(v)) kldiMin = v;
+  }
+  if (filterKldiMax && filterKldiMax.value !== '') {
+    const v = Number(filterKldiMax.value);
+    if (!Number.isNaN(v)) kldiMax = v;
+  }
+
+  const filtered = allRows.filter((row) => {
+    if (domainVal && row.domain !== domainVal) return false;
+    if (classVal && (row.classification || '') !== classVal) return false;
+
+    if (typeof row.kldi === 'number') {
+      if (kldiMin !== null && row.kldi < kldiMin) return false;
+      if (kldiMax !== null && row.kldi > kldiMax) return false;
+    }
+    return true;
+  });
+
+  renderRows(filtered);
+}
+
+function renderRows(rows) {
+  if (!rowsBody) return;
+
+  if (!rows.length) {
+    rowsBody.innerHTML = '<tr><td colspan="7" class="small">Keine Zeilen (Filter?) gefunden.</td></tr>';
+    return;
+  }
+
+  rowsBody.innerHTML = '';
+  for (const row of rows) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="mono small">${escapeHtml(row.id)}</td>
+      <td>${escapeHtml(row.domain)}</td>
+      <td class="small"><a href="${escapeHtml(row.source_url)}" target="_blank" rel="noopener noreferrer">Quelle</a></td>
+      <td class="small">${escapeHtml(row.original_text)}</td>
+      <td class="small">${escapeHtml(row.paraphrased_text)}</td>
+      <td class="mono">${typeof row.kldi === 'number' ? row.kldi.toFixed(4) : ''}</td>
+      <td class="small">${escapeHtml(row.classification || '')}</td>
+      <td class="mono">${
+        typeof row.kldi_initial === 'number' ? row.kldi_initial.toFixed(4) : ''
+      }</td>
+      <td class="mono">${
+        typeof row.kldi_best === 'number' ? row.kldi_best.toFixed(4) : ''
+      }</td>
+      <td class="mono">${
+        typeof row.iterations === 'number' ? row.iterations : ''
+      }</td>
+    `;
+    rowsBody.appendChild(tr);
+  }
+}
+
+function toggleCompare(runId) {
+  const idx = compareSelection.indexOf(runId);
+  if (idx !== -1) {
+    compareSelection.splice(idx, 1);
+  } else {
+    if (compareSelection.length >= 2) {
+      compareSelection.shift();
+    }
+    compareSelection.push(runId);
+  }
+  updateRunComparePanel();
+}
+
+async function updateRunComparePanel() {
+  if (!runCompareEl) return;
+
+  if (!compareSelection.length) {
+    runCompareEl.textContent = 'Keine Runs zum Vergleich ausgewählt.';
+    return;
+  }
+
+  try {
+    const details = await Promise.all(
+      compareSelection.map((id) => fetch(`${API_BASE}/runs/${id}`).then((res) => {
+        if (!res.ok) throw new Error('Run nicht gefunden');
+        return res.json();
+      }))
+    );
+
+    const headers = compareSelection.map((id) => `<th class="small">${escapeHtml(id)}</th>`).join('');
+
+    const rows = [];
+
+    const metrics = [
+      {
+        label: 'Status',
+        get: (d) => String(d.status || ''),
+      },
+      {
+        label: 'Texte (requested)',
+        get: (d) => (typeof d.requested_count === 'number' ? String(d.requested_count) : '–'),
+      },
+      {
+        label: 'Texte (processed)',
+        get: (d) => {
+          const s = d.summary || {};
+          const processed =
+            typeof s.processed === 'number'
+              ? s.processed
+              : typeof s.documents_processed === 'number'
+              ? s.documents_processed
+              : null;
+          return processed != null ? String(processed) : '–';
+        },
+      },
+      {
+        label: 'ROC AUC',
+        get: (d) => {
+          const stats = (d.summary && d.summary.stats) || {};
+          return typeof stats.roc_auc === 'number' ? stats.roc_auc.toFixed(3) : '–';
+        },
+      },
+      {
+        label: 'Mann-Whitney p',
+        get: (d) => {
+          const stats = (d.summary && d.summary.stats) || {};
+          return typeof stats.mannwhitney_p === 'number'
+            ? stats.mannwhitney_p.toExponential(3)
+            : '–';
+        },
+      },
+      {
+        label: 'Adaptive Schwelle',
+        get: (d) => {
+          const stats = (d.summary && d.summary.stats) || {};
+          return typeof stats.adaptive_threshold === 'number'
+            ? stats.adaptive_threshold.toFixed(4)
+            : '–';
+        },
+      },
+      {
+        label: 'KLDI best (avg)',
+        get: (d) => {
+          const stats = (d.summary && d.summary.stats) || {};
+          return typeof stats.kldi_best_avg === 'number'
+            ? stats.kldi_best_avg.toFixed(4)
+            : '–';
+        },
+      },
+      {
+        label: 'KLDI initial (avg)',
+        get: (d) => {
+          const stats = (d.summary && d.summary.stats) || {};
+          return typeof stats.kldi_initial_avg === 'number'
+            ? stats.kldi_initial_avg.toFixed(4)
+            : '–';
+        },
+      },
+    ];
+
+    for (const m of metrics) {
+      const cells = details
+        .map((d) => `<td class="small">${escapeHtml(m.get(d))}</td>`)
+        .join('');
+      rows.push(`<tr><th class="small">${escapeHtml(m.label)}</th>${cells}</tr>`);
+    }
+
+    runCompareEl.innerHTML = `
+      <h3 class="small">Vergleich ausgewählter Runs</h3>
+      <table>
+        <thead>
+          <tr>
+            <th class="small">Metrik</th>
+            ${headers}
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.join('')}
+        </tbody>
+      </table>
+    `;
+  } catch (err) {
+    console.error(err);
+    runCompareEl.textContent = 'Fehler beim Laden der Vergleichsdaten.';
   }
 }
 
@@ -185,6 +401,7 @@ function renderRunList(items) {
             <button type="button" class="primary small-btn" data-action="csv" data-run-id="${id}">CSV</button>
             <button type="button" class="primary small-btn" data-action="json" data-run-id="${id}">JSON</button>
             <button type="button" class="primary small-btn" data-action="report" data-run-id="${id}">Report</button>
+            <button type="button" class="primary small-btn" data-action="compare" data-run-id="${id}">Vergleich</button>
             <button type="button" class="primary small-btn" data-action="delete" data-run-id="${id}">Löschen</button>
           </td>
         </tr>
@@ -232,6 +449,8 @@ async function handleRunListAction(action, runId) {
     window.open(`${API_BASE}/runs/${runId}/summary_export`, '_blank');
   } else if (action === 'report') {
     window.open(`${API_BASE}/runs/${runId}/report`, '_blank');
+  } else if (action === 'compare') {
+    toggleCompare(runId);
   } else if (action === 'delete') {
     const confirmed = window.confirm('Diesen Run wirklich löschen?');
     if (!confirmed) return;
@@ -676,33 +895,16 @@ async function loadRows() {
     const res = await fetch(`${API_BASE}/runs/${currentRunId}/rows`);
     if (!res.ok) throw new Error('Fehler beim Laden der Zeilen');
     const rows = await res.json();
-    if (!rows.length) {
-      rowsBody.innerHTML = '<tr><td colspan="7" class="small">Keine Zeilen gefunden.</td></tr>';
-      return;
+    allRows = rows;
+
+    // Domänen-Filteroptionen aus den geladenen Zeilen ableiten
+    if (filterDomain) {
+      const domains = Array.from(new Set(allRows.map((r) => r.domain))).sort();
+      filterDomain.innerHTML = '<option value="">Alle Domänen</option>' +
+        domains.map((d) => `<option value="${escapeHtml(d)}">${escapeHtml(d)}</option>`).join('');
     }
-    rowsBody.innerHTML = '';
-    for (const row of rows) {
-      const tr = document.createElement('tr');
-      tr.innerHTML = `
-        <td class="mono small">${escapeHtml(row.id)}</td>
-        <td>${escapeHtml(row.domain)}</td>
-        <td class="small"><a href="${escapeHtml(row.source_url)}" target="_blank" rel="noopener noreferrer">Quelle</a></td>
-        <td class="small">${escapeHtml(row.original_text)}</td>
-        <td class="small">${escapeHtml(row.paraphrased_text)}</td>
-        <td class="mono">${row.kldi.toFixed(4)}</td>
-        <td class="small">${escapeHtml(row.classification || '')}</td>
-        <td class="mono">${
-          typeof row.kldi_initial === 'number' ? row.kldi_initial.toFixed(4) : ''
-        }</td>
-        <td class="mono">${
-          typeof row.kldi_best === 'number' ? row.kldi_best.toFixed(4) : ''
-        }</td>
-        <td class="mono">${
-          typeof row.iterations === 'number' ? row.iterations : ''
-        }</td>
-      `;
-      rowsBody.appendChild(tr);
-    }
+
+    applyFiltersAndRenderRows();
   } catch (err) {
     console.error(err);
     rowsBody.innerHTML = '<tr><td colspan="7" class="small">Fehler beim Laden der Zeilen.</td></tr>';

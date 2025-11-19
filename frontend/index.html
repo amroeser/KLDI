@@ -441,10 +441,36 @@
         </div>
         <div id="runsPanelBody" style="display: none; margin-top: 0.5rem;">
           <div id="runsList" class="small">Lade vergangene Runs...</div>
+          <div id="runCompare" class="small" style="margin-top: 0.75rem;"></div>
         </div>
       </div>
 
       <h2>Ergebnisse</h2>
+
+      <div id="resultFilters" class="small" style="margin-top: 0.5rem; margin-bottom: 0.25rem; display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: flex-end;">
+        <div>
+          <label for="filterDomain">Domäne</label>
+          <select id="filterDomain" style="min-width: 140px; padding: 0.2rem 0.3rem; border-radius: 0.4rem; border: 1px solid #4b5563; background: #020617; color: #e5e7eb;">
+            <option value="">Alle Domänen</option>
+          </select>
+        </div>
+        <div>
+          <label for="filterClass">Klassifikation</label>
+          <select id="filterClass" style="min-width: 140px; padding: 0.2rem 0.3rem; border-radius: 0.4rem; border: 1px solid #4b5563; background: #020617; color: #e5e7eb;">
+            <option value="">Alle</option>
+            <option value="human-like">human-like</option>
+            <option value="detectable">detectable</option>
+          </select>
+        </div>
+        <div>
+          <label for="filterKldiMin">KLDI min</label>
+          <input id="filterKldiMin" type="number" step="0.0001" style="width: 110px;" />
+        </div>
+        <div>
+          <label for="filterKldiMax">KLDI max</label>
+          <input id="filterKldiMax" type="number" step="0.0001" style="width: 110px;" />
+        </div>
+      </div>
       <table>
         <thead>
           <tr>

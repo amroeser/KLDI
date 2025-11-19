@@ -107,6 +107,21 @@ def generate_run_markdown_report(db: Session, run_id: str) -> str:
     kldi_best_avg = stats.get("kldi_best_avg")
     kldi_avg_improvement = stats.get("kldi_avg_improvement")
 
+    # Verteilungsstatistiken (Boxplot-Style)
+    hh_min = stats.get("hh_min")
+    hh_q1 = stats.get("hh_q1")
+    hh_median = stats.get("hh_median")
+    hh_q3 = stats.get("hh_q3")
+    hh_max = stats.get("hh_max")
+    hh_mean = stats.get("hh_mean")
+
+    hk_min = stats.get("hk_min")
+    hk_q1 = stats.get("hk_q1")
+    hk_median = stats.get("hk_median")
+    hk_q3 = stats.get("hk_q3")
+    hk_max = stats.get("hk_max")
+    hk_mean = stats.get("hk_mean")
+
     interpretation = analysis.get("interpretation") or ""
     llm_summary = analysis.get("llm_summary") or ""
 

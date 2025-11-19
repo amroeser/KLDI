@@ -434,11 +434,24 @@ def process_run_job(run_id: str, domain_slugs: List[str] | None = None) -> None:
             n_hk = len(hk_arr)
             robust_samples = n_hh >= MIN_ROBUST_SAMPLE_SIZE and n_hk >= MIN_ROBUST_SAMPLE_SIZE
 
-            q1 = np.percentile(hh_arr, 25)
-            q3 = np.percentile(hh_arr, 75)
-            iqr = q3 - q1
+            # Verteilungszusammenfassung (für Boxplots / Dichtevisualisierung)
+            hh_min = float(np.min(hh_arr))
+            hh_q1 = float(np.percentile(hh_arr, 25))
+            hh_median = float(np.median(hh_arr))
+            hh_q3 = float(np.percentile(hh_arr, 75))
+            hh_max = float(np.max(hh_arr))
+            hh_mean = float(np.mean(hh_arr))
+
+            hk_min = float(np.min(hk_arr))
+            hk_q1 = float(np.percentile(hk_arr, 25))
+            hk_median = float(np.median(hk_arr))
+            hk_q3 = float(np.percentile(hk_arr, 75))
+            hk_max = float(np.max(hk_arr))
+            hk_mean = float(np.mean(hk_arr))
+
             # Schwelle: oberes Quartil plus 1.5*IQR als "klar über menschlichem Bereich"
-            adaptive_threshold = float(q3 + 1.5 * iqr)
+            iqr = hh_q3 - hh_q1
+            adaptive_threshold = float(hh_q3 + 1.5 * iqr)
 
             # Mann-Whitney-U-Test Human→Human vs Human→KI
             try:
@@ -537,6 +550,19 @@ def process_run_job(run_id: str, domain_slugs: List[str] | None = None) -> None:
                 "kldi_median_diff_ci": kldi_median_diff_ci,
                 "robust_sample_sizes": robust_samples,
                 "parallelism": PARALLELISM,
+                # Verteilungszusammenfassung (Boxplot-Style)
+                "hh_min": hh_min,
+                "hh_q1": hh_q1,
+                "hh_median": hh_median,
+                "hh_q3": hh_q3,
+                "hh_max": hh_max,
+                "hh_mean": hh_mean,
+                "hk_min": hk_min,
+                "hk_q1": hk_q1,
+                "hk_median": hk_median,
+                "hk_q3": hk_q3,
+                "hk_max": hk_max,
+                "hk_mean": hk_mean,
             }
 
         # Finale Klassifikation mit adaptiver Schwelle, falls vorhanden

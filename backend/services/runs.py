@@ -16,6 +16,11 @@ from paraphrase_agents.config import get_default_model
 
 
 USE_ASYNC_QUEUE = os.getenv("USE_ASYNC_QUEUE", "0") == "1"
+# Konfigurierbares Timeout für den Run-Processing-Job in der RQ-Queue
+try:
+    RUN_JOB_TIMEOUT = int(os.getenv("RUN_JOB_TIMEOUT", "1800"))
+except ValueError:
+    RUN_JOB_TIMEOUT = 1800
 
 
 def create_run(db: Session, count: int, domains: List[str] | None = None) -> Run:
@@ -48,8 +53,15 @@ def create_run(db: Session, count: int, domains: List[str] | None = None) -> Run
     selected_slugs = [d.slug for d in active_domains]
 
     if USE_ASYNC_QUEUE:
-        # Original behaviour: enqueue in Redis/RQ and let a worker process it
-        default_queue.enqueue(process_run_job, run.id, selected_slugs)
+        # Original behaviour: enqueue in Redis/RQ und Worker verarbeitet
+        # Das Job-Timeout ist konfigurierbar, damit große Runs (z.B. 500 Texte)
+        # nicht nach dem RQ-Default von 180s abbrechen.
+        default_queue.enqueue(
+            process_run_job,
+            run.id,
+            selected_slugs,
+            job_timeout=RUN_JOB_TIMEOUT,
+        )
     else:
         # Synchronous fallback: run the pipeline in-process (avoids macOS fork issues)
         process_run_job(run.id, selected_slugs)
