@@ -47,9 +47,8 @@ DOMAINS: List[DomainConfig] = [
         name="Nachrichten",
         slug="news",
         sources=[
-            "https://www.nasa.gov/press-release/nasa-s-next-generation-planetary-mission",
             "https://web.archive.org/web/20181201041400/https://www.bbc.com/news",
-            "https://www.nytimes.com/2015/09/29/science/nasa-mars-liquid-water.html",
+            "https://www.nasa.gov/news-release/nasa-confirms-evidence-that-liquid-water-flows-on-todays-mars/",
             "https://web.archive.org/web/20170101000000/https://www.theguardian.com/international",
         ],
     ),
