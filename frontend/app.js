@@ -314,7 +314,12 @@ async function loadEnvConfig() {
     if (!res.ok) throw new Error('Fehler beim Laden der Env-Konfiguration');
     const data = await res.json();
 
-    if (envOpenAiKey) envOpenAiKey.value = data.openai_api_key || '';
+    if (envOpenAiKey) {
+      envOpenAiKey.value = '';
+      envOpenAiKey.placeholder = data.api_key_configured
+        ? 'Configured; enter a new key to replace it'
+        : 'Enter API key';
+    }
     if (envOpenAiModel) envOpenAiModel.value = data.openai_model || '';
     if (envOpenAiBaseUrl) envOpenAiBaseUrl.value = data.openai_base_url || '';
     if (envBackendPort) envBackendPort.value = data.backend_port || '';
@@ -532,6 +537,7 @@ if (envSaveBtn) {
       });
       if (!res.ok) throw new Error('Fehler beim Speichern der Env-Konfiguration');
       const data = await res.json();
+      if (envOpenAiKey) envOpenAiKey.value = '';
       envStatus.textContent =
         'Gespeichert. Bitte Backend mit ./start.sh neu starten, damit die Änderungen wirksam werden.';
 

@@ -50,7 +50,7 @@ class DocumentRow(BaseModel):
 
 class EnvConfig(BaseModel):
     # OpenAI / LLM Einstellungen
-    openai_api_key: Optional[str] = None
+    api_key_configured: bool = False
     openai_model: Optional[str] = None
     openai_base_url: Optional[str] = None
 

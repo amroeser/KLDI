@@ -54,7 +54,7 @@ def get_env_config() -> EnvConfig:
     env_exists = ENV_PATH.exists()
 
     # Defaults wie in .env.example / start.sh
-    openai_api_key = raw.get("OPENAI_API_KEY")
+    api_key_configured = bool(raw.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY"))
     openai_model = raw.get("OPENAI_MODEL") or "gpt-4o-mini"
     openai_base_url = raw.get("OPENAI_BASE_URL") or "https://api.openai.com/v1"
 
@@ -62,7 +62,7 @@ def get_env_config() -> EnvConfig:
     frontend_port_base = raw.get("FRONTEND_PORT_BASE") or os.getenv("FRONTEND_PORT_BASE") or "5500"
 
     return EnvConfig(
-        openai_api_key=openai_api_key,
+        api_key_configured=api_key_configured,
         openai_model=openai_model,
         openai_base_url=openai_base_url,
         backend_port=int(backend_port) if backend_port else None,
