@@ -36,6 +36,7 @@ class KLDEvaluator:
         epsilon: float = 1e-10,
         corpus_repo: Optional[HumanCorpusRepository] = None,
         bootstrap_corpus: bool = False,
+        use_reference_corpus: bool = True,
     ):
         """
         Initialize the evaluator with n-gram size.
@@ -48,10 +49,9 @@ class KLDEvaluator:
         self.epsilon = epsilon
         self.corpus_repo = corpus_repo or HumanCorpusRepository()
         self.reference_texts: List[str] = []
-        if bootstrap_corpus:
+        self.use_reference_corpus = use_reference_corpus
+        if self.use_reference_corpus:
             self._load_reference_texts(force=bootstrap_corpus)
-        else:
-            self._load_reference_texts(force=False)
 
     def _load_reference_texts(self, force: bool = False) -> None:
         documents = bootstrap_human_corpus(self.corpus_repo, force=force)

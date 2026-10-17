@@ -139,7 +139,7 @@ def generate_run_markdown_report(db: Session, run_id: str) -> str:
             )
         elif roc_auc < 0.6:
             lowlights.append(
-                f"KLDI shows limited discriminative power (ROC-AUC = {_format_float(roc_auc, 3)}), indicating strong overlap between Human→Human and Human→KI distributions."
+                f"KLDI shows limited discriminative power (ROC-AUC = {_format_float(roc_auc, 3)}), indicating strong overlap between Human→Human and Human→AI distributions."
             )
 
     if kldi_avg_improvement is not None:
@@ -150,7 +150,7 @@ def generate_run_markdown_report(db: Session, run_id: str) -> str:
 
     if cliffs_delta is not None and cliffs_delta_magnitude:
         highlights.append(
-            f"Effect size (Cliff's delta) between Human→Human and Human→KI distributions is {_format_float(cliffs_delta, 3)} ({cliffs_delta_magnitude})."
+            f"Effect size (Cliff's delta) between Human→Human and Human→AI distributions is {_format_float(cliffs_delta, 3)} ({cliffs_delta_magnitude})."
         )
 
     if not highlights:
@@ -170,13 +170,13 @@ def generate_run_markdown_report(db: Session, run_id: str) -> str:
 ## 1. Abstract
 
 This report summarizes a single experimental run of the *Human-Like Text Paraphrasing System*.
-We investigate whether KI-generated paraphrases of human-written texts can be reliably detected
-as machine-generated based on the Kullback–Leibler Divergence Index (KLDI) between original
-and paraphrased texts.
+The goal is to investigate whether AI-generated paraphrases of human-written texts can be
+reliably detected as machine-generated based on the Kullback–Leibler Divergence Index (KLDI)
+between original and paraphrased texts.
 
 **Key findings (Run {run.id}):**
 
-- Number of documents (Human→KI): {hk_count if hk_count is not None else documents_processed}
+- Number of documents (Human→AI): {hk_count if hk_count is not None else documents_processed}
 - Number of pairs (Human→Human): {hh_count if hh_count is not None else "n/a"}
 - ROC-AUC (KLDI as detector): {_format_float(roc_auc, 3)} (CI { _format_ci(roc_auc_ci, 3) })
 - Mann–Whitney p-value: {_format_float(mannwhitney_p, 6) if mannwhitney_p is not None else "n/a"}
@@ -187,12 +187,12 @@ and paraphrased texts.
 
 The central research question of this project is:
 
-> Sind KI-generierte Paraphrasen von menschlichen Texten anhand des
-> Kullback-Leibler-Divergenz-Index (KLDI) zuverlässig als KI-Text erkennbar?
+> Can AI-generated paraphrases of human-written texts be reliably detected as AI-generated
+> based on the Kullback–Leibler Divergence Index (KLDI)?
 
 To address this question, the system scrapes pre‑2019 human-written texts from four fixed domains,
-generates paraphrases using an OpenAI-compatible LLM, and compares the KLDI distributions of
-Human→Human vs. Human→KI text pairs.
+generates paraphrases using an OpenAI-compatible language model, and compares the KLDI
+distributions of Human→Human vs. Human→AI text pairs.
 
 ## 3. Methods
 
@@ -235,7 +235,7 @@ project README:
 
 Two KLDI distributions are constructed:
 
-- Human→KI: D(P_human || Q_ki) for all paraphrases.
+- Human→AI: D(P_human || Q_ki) for all paraphrases.
 - Human→Human: KLDI between pairs of original texts within the same domain.
 
 From the Human→Human distribution, an adaptive threshold is derived:
@@ -261,7 +261,7 @@ temperature, seed and (optionally) Git commit.
 ### 4.1 Descriptive Statistics
 
 - Human→Human count: {hh_count if hh_count is not None else "n/a"}
-- Human→KI count: {hk_count if hk_count is not None else documents_processed}
+- Human→AI count: {hk_count if hk_count is not None else documents_processed}
 - Average KLDI (initial paraphrases): {_format_float(kldi_initial_avg, 3) if kldi_initial_avg is not None else "n/a"}
 - Average KLDI (best paraphrases): {_format_float(kldi_best_avg, 3) if kldi_best_avg is not None else "n/a"}
 - Average KLDI improvement (HK): {_format_float(kldi_avg_improvement, 3) if kldi_avg_improvement is not None else "n/a"}
@@ -302,18 +302,42 @@ Per-domain classification summary:
 ## 6. Conclusion
 
 For this run, the KLDI-based analysis suggests the following high-level answer to the
-research question about KI-detectability:
+research question about AI detectability:
 
-> {llm_summary or interpretation or "No robust statement about KI detectability can be made based on this run."}
+> {llm_summary or interpretation or "No robust statement about AI detectability can be made based on this run."}
 
 All conclusions should be interpreted in light of the sample size, domain selection and
 known limitations of KLDI as a purely distributional similarity measure.
 
-## 7. Appendix: Run Configuration
+## 7. Appendix
+
+### 7.1 Run Configuration
 
 Creation timestamp: {created}
 
 {config_table}
+
+### 7.2 Suggested Figures and Visualizations
+
+The following figures are suggested for inclusion in an academic paper based on this run.
+
+- **Figure 1 – End-to-end experimental pipeline.**
+  High-level flow diagram of scraping, paraphrasing, KLDI computation, statistical evaluation and reporting (cf. README Mermaid diagrams). This figure documents the overall data and processing flow.
+
+- **Figure 2 – KLDI distributions (Human→Human vs. Human→AI).**
+  Side-by-side boxplots or density plots of the empirical KLDI distributions for Human→Human and Human→AI pairs, using the summary statistics exported in this run's JSON and CSV files.
+
+- **Figure 3 – ROC curve and effective AUC.**
+  ROC curve with KLDI as score (Human→Human labelled as class 0, Human→AI as class 1), including a bootstrap confidence band and the effective AUC as reported by the backend. This figure makes the (in)ability of KLDI to discriminate between human and AI texts visually explicit.
+
+- **Figure 4 – Threshold behaviour and misclassification rates.**
+  Bar or line plots showing, for the adaptive threshold derived from Human→Human data, the share of Human→Human and Human→AI pairs above the threshold and the corresponding balanced accuracy. This illustrates how often the KLDI-based decision rule misclassifies texts in practice.
+
+- **Figure 5 – Near-zero KLDI and approximate equivalence.**
+  Histogram or bar chart of the proportion of pairs with near-zero KLDI values for this run, signalling approximate distributional equivalence between original and paraphrase. This empirically supports the theoretical argument that authorship is often underdetermined from the text alone.
+
+All figures can be generated reproducibly from the run-level CSV and JSON exports produced by the system for the given run identifier.
+
 """
 
     try:

@@ -18,6 +18,7 @@ const progressBar = document.getElementById('progressBar');
 const errorBox = document.getElementById('errorBox');
 const perDomainChart = document.getElementById('perDomainChart');
 const statsCharts = document.getElementById('statsCharts');
+const kldiDiagSection = document.getElementById('kldiDiagSection');
 const runsListContainer = document.getElementById('runsList');
 const runCompareEl = document.getElementById('runCompare');
 const filterDomain = document.getElementById('filterDomain');
@@ -334,6 +335,80 @@ async function loadEnvConfig() {
     console.error(err);
     if (envStatus) {
       envStatus.textContent = 'Fehler beim Laden der .env-Konfiguration.';
+    }
+  }
+
+  // KLDI-Diagnostik-Section (theorieorientierte Kennzahlen)
+  if (kldiDiagSection) {
+    const analysis = summary.analysis || {};
+    const diag = analysis.kldi_diagnostics || null;
+    if (!diag) {
+      kldiDiagSection.textContent = '';
+    } else {
+      const parts = [];
+      if (typeof diag.human_human_count === 'number' || typeof diag.human_ki_count === 'number') {
+        parts.push(
+          `Paare HH/HK: ${diag.human_human_count ?? '–'} / ${diag.human_ki_count ?? '–'}`
+        );
+      }
+      if (diag.range) {
+        const r = diag.range;
+        if (typeof r.min === 'number' && typeof r.max === 'number') {
+          parts.push(`Range KLDI: [${r.min.toFixed(4)}, ${r.max.toFixed(4)}]`);
+        }
+      }
+      if (diag.nonnegativity) {
+        const nn = diag.nonnegativity;
+        if (typeof nn.violations === 'number') {
+          parts.push(`KLDI < 0 (num.): ${nn.violations}`);
+        }
+        if (typeof nn.epsilon === 'number') {
+          parts.push(`ε (Glättung): ${nn.epsilon}`);
+        }
+      }
+      if (diag.near_zero) {
+        const nz = diag.near_zero;
+        const fmt = (v) =>
+          typeof v === 'number' ? `${(v * 100).toFixed(1)}%` : '–';
+        parts.push(
+          `D(P‖Q)≈0 Anteile: gesamt=${fmt(nz.overall)}, HH=${fmt(
+            nz.human_human
+          )}, HK=${fmt(nz.human_ki)}`
+        );
+      }
+      if (diag.roc) {
+        const r = diag.roc;
+        if (typeof r.auc === 'number') {
+          const eff =
+            typeof r.auc_effective === 'number' ? r.auc_effective.toFixed(3) : '–';
+          const dir = r.direction || '–';
+          parts.push(
+            `ROC AUC: ${r.auc.toFixed(3)} (effektiv=${eff}, Richtung=${dir})`
+          );
+        }
+      }
+      if (diag.threshold) {
+        const t = diag.threshold;
+        const fmtPct = (v) =>
+          typeof v === 'number' ? `${(v * 100).toFixed(1)}%` : '–';
+        if (typeof t.adaptive === 'number') {
+          parts.push(`T_adaptiv: ${t.adaptive.toFixed(4)}`);
+        }
+        parts.push(
+          `Oberhalb Schwelle: HH=${fmtPct(t.share_detectable_hh)}, HK=${fmtPct(
+            t.share_detectable_hk
+          )}`
+        );
+        if (typeof t.balanced_accuracy === 'number') {
+          parts.push(
+            `Balanced Accuracy @T: ${(t.balanced_accuracy * 100).toFixed(1)}%`
+          );
+        }
+      }
+
+      kldiDiagSection.innerHTML = parts.length
+        ? '<strong>KLDI-Diagnostik:</strong> ' + parts.join(' · ')
+        : '';
     }
   }
 }

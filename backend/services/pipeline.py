@@ -213,7 +213,7 @@ def process_run_job(run_id: str, domain_slugs: List[str] | None = None) -> None:
         session.commit()
 
         paraphraser = ParaphraseAgent(model=run.llm_model, temperature=run.temperature)
-        evaluator = KLDEvaluator(bootstrap_corpus=True)
+        evaluator = KLDEvaluator(bootstrap_corpus=False, use_reference_corpus=False)
 
         # Ermittele, welche Domains für diesen Run aktiv sind
         if domain_slugs:
@@ -418,12 +418,17 @@ def process_run_job(run_id: str, domain_slugs: List[str] | None = None) -> None:
         adaptive_threshold: float | None = None
         p_value: float | None = None
         auc: float | None = None
+        auc_effective: float | None = None
+        auc_direction: str | None = None
         cliffs_delta: float | None = None
         cliffs_magnitude: str | None = None
         roc_auc_ci: Tuple[float, float] | None = None
         kldi_median_diff: float | None = None
         kldi_median_diff_ci: Tuple[float, float] | None = None
         robust_samples: bool = False
+        share_detectable_hh: float | None = None
+        share_detectable_hk: float | None = None
+        balanced_accuracy: float | None = None
 
         if hh_values and hk_values:
             hh_arr = np.array(hh_values)
@@ -453,6 +458,19 @@ def process_run_job(run_id: str, domain_slugs: List[str] | None = None) -> None:
             iqr = hh_q3 - hh_q1
             adaptive_threshold = float(hh_q3 + 1.5 * iqr)
 
+            # Anteile oberhalb adaptiver Schwelle und Balanced Accuracy
+            if adaptive_threshold is not None:
+                share_detectable_hh = (
+                    float(np.mean(hh_arr > adaptive_threshold)) if n_hh > 0 else None
+                )
+                share_detectable_hk = (
+                    float(np.mean(hk_arr > adaptive_threshold)) if n_hk > 0 else None
+                )
+                if share_detectable_hh is not None and share_detectable_hk is not None:
+                    tpr = share_detectable_hk  # KI als positive Klasse
+                    tnr = 1.0 - share_detectable_hh
+                    balanced_accuracy = (tpr + tnr) / 2.0
+
             # Mann-Whitney-U-Test Human→Human vs Human→KI
             try:
                 stat, p_value = mannwhitneyu(hh_arr, hk_arr, alternative="two-sided")
@@ -464,8 +482,17 @@ def process_run_job(run_id: str, domain_slugs: List[str] | None = None) -> None:
             scores = list(hh_arr) + list(hk_arr)
             try:
                 auc = float(roc_auc_score(labels, scores))
+                if auc is not None:
+                    if auc >= 0.5:
+                        auc_effective = auc
+                        auc_direction = "expected"
+                    else:
+                        auc_effective = 1.0 - auc
+                        auc_direction = "inverted"
             except Exception:
                 auc = None
+                auc_effective = None
+                auc_direction = None
 
             # Effektstärke: Cliff's Delta (HH vs HK, höhere Werte = eher KI)
             try:
@@ -534,6 +561,15 @@ def process_run_job(run_id: str, domain_slugs: List[str] | None = None) -> None:
                 kldi_best_avg = None
                 kldi_avg_improvement = None
 
+            # KLDI-Range und numerische Eigenschaften
+            all_kldi = np.concatenate([hh_arr, hk_arr])
+            kldi_min = float(np.min(all_kldi))
+            kldi_max = float(np.max(all_kldi))
+            kldi_negative_count = int(np.sum(all_kldi < -1e-8))
+            kldi_near_zero_share = float(np.mean(all_kldi < 1e-3))
+            kldi_near_zero_share_hh = float(np.mean(hh_arr < 1e-3))
+            kldi_near_zero_share_hk = float(np.mean(hk_arr < 1e-3))
+
             stats_summary = {
                 "human_human_count": len(hh_arr),
                 "human_ki_count": len(hk_arr),
@@ -550,6 +586,13 @@ def process_run_job(run_id: str, domain_slugs: List[str] | None = None) -> None:
                 "kldi_median_diff_ci": kldi_median_diff_ci,
                 "robust_sample_sizes": robust_samples,
                 "parallelism": PARALLELISM,
+                "kldi_min": kldi_min,
+                "kldi_max": kldi_max,
+                "kldi_negative_count": kldi_negative_count,
+                "kldi_near_zero_share": kldi_near_zero_share,
+                "kldi_near_zero_share_hh": kldi_near_zero_share_hh,
+                "kldi_near_zero_share_hk": kldi_near_zero_share_hk,
+                "kldi_epsilon": evaluator.epsilon,
                 # Verteilungszusammenfassung (Boxplot-Style)
                 "hh_min": hh_min,
                 "hh_q1": hh_q1,
@@ -563,6 +606,11 @@ def process_run_job(run_id: str, domain_slugs: List[str] | None = None) -> None:
                 "hk_q3": hk_q3,
                 "hk_max": hk_max,
                 "hk_mean": hk_mean,
+                "roc_auc_effective": auc_effective,
+                "roc_auc_direction": auc_direction,
+                "share_detectable_hh": share_detectable_hh,
+                "share_detectable_hk": share_detectable_hk,
+                "balanced_accuracy_threshold": balanced_accuracy,
             }
 
         # Finale Klassifikation mit adaptiver Schwelle, falls vorhanden
@@ -584,31 +632,84 @@ def process_run_job(run_id: str, domain_slugs: List[str] | None = None) -> None:
                 stats = domain_stats[dom]
                 stats[cls.replace("-", "_")] += 1
 
-        # Textuelle Einwertung
-        interpretation = "Nicht genug Daten für eine statistische Bewertung."
+        # Rule-based textual interpretation
+        interpretation = "Not enough data for a statistical assessment."
         if adaptive_threshold is not None and auc is not None:
             # Basis-Aussage abhängig von Signifikanz, AUC und Effektstärke
-            if p_value is not None and p_value < 0.05 and auc >= 0.7:
-                if stats_summary.get("robust_sample_sizes") and stats_summary.get("cliffs_delta_magnitude") in {
-                    "medium",
-                    "large",
-                }:
+            if (
+                p_value is not None
+                and p_value < 0.05
+                and auc_effective is not None
+                and auc_effective >= 0.7
+            ):
+                if auc_direction == "expected":
+                    if stats_summary.get("robust_sample_sizes") and stats_summary.get(
+                        "cliffs_delta_magnitude"
+                    ) in {
+                        "medium",
+                        "large",
+                    }:
+                        interpretation = (
+                            "Strong evidence: KLDI is high and the distributions differ statistically "
+                            "significantly with sufficient sample size and at least medium effect size. "
+                            "AI-generated text is robustly detectable in this sample."
+                        )
+                    else:
+                        interpretation = (
+                            "Significant difference in KLDI and elevated effective AUC, but sample size "
+                            "or effect size is limited. The result should be interpreted as preliminary and exploratory."
+                        )
+                elif auc_direction == "inverted":
                     interpretation = (
-                        "Starke Evidenz: KLDI hoch und Unterschied statistisch signifikant "
-                        "mit ausreichender Stichprobengröße und mindestens mittlerer Effektstärke. "
-                        "KI-Text ist in dieser Stichprobe robust erkennbar."
+                        "There is a clear and statistically significant difference between Human→Human "
+                        "and Human→AI distributions, but in the opposite direction of the expected detection task: "
+                        "Human→Human exhibits higher KLDI values on average than Human→AI. "
+                        "In this configuration, KLDI is therefore not a meaningful AI detector, but primarily reflects "
+                        "methodological artefacts (e.g., the chosen direction of the divergence)."
                     )
                 else:
                     interpretation = (
-                        "Signifikanter Unterschied im KLDI und erhöhte AUC, aber Stichprobengröße "
-                        "oder Effektstärke sind begrenzt. Ergebnis ist als vorläufig/explorativ zu werten."
+                        "Significant difference in KLDI with high effective AUC, but the direction of separation "
+                        "is not clearly attributable. The results should be interpreted with caution."
                     )
             else:
                 interpretation = (
-                    "Keine klare Signifikanz oder niedrige AUC: die KLDI-Verteilungen von Human→Human "
-                    "und Human→KI überlappen stark. Eine zuverlässige Unterscheidung ist anhand des KLDI "
-                    "in dieser Stichprobe nicht möglich."
+                    "No robust evidence for reliable AI detection based on KLDI: the AUC is close to 0.5 "
+                    "or the difference between distributions is not statistically significant."
                 )
+
+        # KLDI-Diagnostik (zusätzliche, theorieorientierte Section)
+        kldi_diagnostics = None
+        if stats_summary:
+            kldi_diagnostics = {
+                "human_human_count": stats_summary.get("human_human_count"),
+                "human_ki_count": stats_summary.get("human_ki_count"),
+                "range": {
+                    "min": stats_summary.get("kldi_min"),
+                    "max": stats_summary.get("kldi_max"),
+                },
+                "nonnegativity": {
+                    "violations": stats_summary.get("kldi_negative_count"),
+                    "epsilon": stats_summary.get("kldi_epsilon"),
+                },
+                "near_zero": {
+                    "overall": stats_summary.get("kldi_near_zero_share"),
+                    "human_human": stats_summary.get("kldi_near_zero_share_hh"),
+                    "human_ki": stats_summary.get("kldi_near_zero_share_hk"),
+                },
+                "roc": {
+                    "auc": stats_summary.get("roc_auc"),
+                    "auc_effective": stats_summary.get("roc_auc_effective"),
+                    "direction": stats_summary.get("roc_auc_direction"),
+                    "ci": stats_summary.get("roc_auc_ci"),
+                },
+                "threshold": {
+                    "adaptive": stats_summary.get("adaptive_threshold"),
+                    "share_detectable_hh": stats_summary.get("share_detectable_hh"),
+                    "share_detectable_hk": stats_summary.get("share_detectable_hk"),
+                    "balanced_accuracy": stats_summary.get("balanced_accuracy_threshold"),
+                },
+            }
 
         # Per-Domain-Zusammenfassung vorbereiten (für LLM und finale Summary)
         if total_created > 0:
@@ -674,6 +775,7 @@ def process_run_job(run_id: str, domain_slugs: List[str] | None = None) -> None:
                 "analysis": {
                     "interpretation": interpretation,
                     "llm_summary": llm_summary,
+                    "kldi_diagnostics": kldi_diagnostics,
                 },
             }
         session.commit()

@@ -6,11 +6,11 @@ from .config import get_default_model, get_openai_client
 
 
 class AnalysisAgent:
-    """LLM-basierter Agent zur Zusammenfassung der Run-Statistik.
+    """LLM-based agent for summarizing run-level statistics.
 
-    Er erhält die bereits berechneten numerischen Kennzahlen (stats_summary,
-    per_domain, Meta-Infos) und erzeugt eine kurze, deutschsprachige
-    wissenschaftliche Einordnung (2–3 Sätze).
+    It receives already computed numerical metrics (stats_summary,
+    per_domain, meta information) and produces a short, English
+    scientific-style interpretation (2–3 sentences).
     """
 
     def __init__(self, model: Optional[str] = None, temperature: float = 0.2) -> None:
@@ -24,10 +24,10 @@ class AnalysisAgent:
         per_domain: Dict[str, Any],
         meta: Dict[str, Any],
     ) -> str:
-        """Erzeuge eine kurze deutschsprachige Zusammenfassung.
+        """Create a short English summary of the run.
 
-        Die Funktion ist defensiv implementiert: bei API-Fehlern wird eine
-        RuntimeError ausgelöst, die von der Pipeline abgefangen werden kann.
+        The function is implemented defensively: on API errors it raises a
+        RuntimeError which can be handled by the pipeline.
         """
 
         # Wir geben die Daten als kompaktes JSON-ähnliches Dict in den Prompt,
@@ -39,26 +39,25 @@ class AnalysisAgent:
         }
 
         system_prompt = (
-            "Du bist ein wissenschaftlicher Assistent für Statistik und Machine Learning. "
-            "Du erhältst numerische Kennzahlen einer Studie zur Erkennbarkeit von KI-Texten "
-            "(KLDI-Verteilungen, AUC, p-Wert, Effektstärken, Konfidenzintervalle). "
-            "Formuliere eine kurze Zusammenfassung auf Deutsch (maximal 2–3 Sätze), "
-            "die die Robustheit der Ergebnisse einordnet. Erwähne explizit, ob KI-Texte in "
-            "dieser Stichprobe anhand des KLDI klar erkennbar sind oder nicht (z.B. \"nicht "
-            "zuverlässig unterscheidbar\"), und stütze dich dabei auf AUC, p-Wert, "
-            "Stichprobengrößen und Effektstärken. Erwähne außerdem, ob die Stichprobengrößen "
-            "ausreichend sind, ob der Effekt eher klein/ mittel/ groß ist und ob die Aussage "
-            "eher explorativ oder robust ist. Verwende eine sachliche, wissenschaftlich "
-            "klingende Sprache ohne Aufzählungen oder Überschriften."
+            "You are a scientific assistant for statistics and machine learning. "
+            "You receive numerical results from a study on the detectability of AI-generated texts "
+            "(KLDI distributions, AUC, p-values, effect sizes, confidence intervals). "
+            "Write a short English summary (maximum 2–3 sentences) that assesses the robustness "
+            "of the findings. Explicitly state whether AI-generated texts are clearly detectable "
+            "in this sample based on KLDI (including AUC and p-value) or not. Base your judgement "
+            "on AUC, p-values, sample sizes and effect sizes. Also mention whether the sample sizes "
+            "are sufficient, whether the effect is small/medium/large, and whether the overall "
+            "statement should be considered exploratory or robust. Use a neutral, scientific tone "
+            "without bullet points or headings."
         )
 
         user_prompt = (
-            "Hier sind die Ergebnisse als Python-Dictionary:\n"
+            "Here are the results as a Python-style dictionary:\n"
             f"{content_dict}\n\n"
-            "Erstelle jetzt die beschriebene Zusammenfassung. Antworte nur mit dem Fließtext, "
-            "ohne Aufzählungen und ohne weitere Erklärungen über den Prompt. Stelle klar, ob "
-            "KI-Texte in dieser konkreten Stichprobe anhand des KLDI (inkl. AUC/p-Wert) als "
-            "erkennbar gelten können oder nicht."
+            "Now produce the requested summary. Answer only with continuous prose, without bullet "
+            "points and without referring to the prompt. Clearly state whether AI-generated texts "
+            "in this concrete sample can be considered detectable based on KLDI (including AUC and "
+            "p-value) or not."
         )
 
         response = self.client.chat.completions.create(
