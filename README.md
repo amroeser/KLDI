@@ -1,5 +1,7 @@
 # Human-Like Text Paraphrasing System
 
+> **Paper data:** The data, results and reproduction scripts for the paper *From Detection to Provenance* are in [`paper/`](paper/README.md).
+
 This project implements a **multi-agent paraphrasing and evaluation system** designed to answer a central question:
 
 > Can AI-generated paraphrases of human-written texts be reliably identified as AI text using the Kullback-Leibler Divergence Index (KLDI)?

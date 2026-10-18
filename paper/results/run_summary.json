@@ -1,0 +1,121 @@
+{
+  "stage": "completed",
+  "documents_processed": 500,
+  "processed": 500,
+  "expected": 500,
+  "domains": [
+    "poetry",
+    "law",
+    "medical",
+    "news"
+  ],
+  "per_domain": {
+    "poetry": {
+      "count": 151,
+      "avg_kld": 11.704345701832507,
+      "human_like": 151,
+      "detectable": 0
+    },
+    "medical": {
+      "count": 151,
+      "avg_kld": 10.140738004873791,
+      "human_like": 151,
+      "detectable": 0
+    },
+    "news": {
+      "count": 48,
+      "avg_kld": 17.009439237373105,
+      "human_like": 48,
+      "detectable": 0
+    },
+    "law": {
+      "count": 150,
+      "avg_kld": 14.195530022032498,
+      "human_like": 150,
+      "detectable": 0
+    }
+  },
+  "stats": {
+    "human_human_count": 200,
+    "human_ki_count": 500,
+    "adaptive_threshold": 63.35848251434231,
+    "mannwhitney_p": 2.3654799937578478e-23,
+    "roc_auc": 0.25942,
+    "roc_auc_ci": [
+      0.21064975,
+      0.32131475
+    ],
+    "cliffs_delta": 0.48116,
+    "cliffs_delta_magnitude": "large",
+    "kldi_initial_avg": 12.984465767604416,
+    "kldi_best_avg": 12.48878045282287,
+    "kldi_avg_improvement": 0.49568531478154654,
+    "kldi_median_diff": -14.63674127172036,
+    "kldi_median_diff_ci": [
+      -16.173885324085596,
+      -13.844769751366776
+    ],
+    "robust_sample_sizes": true,
+    "parallelism": 20,
+    "kldi_min": -1.6017132519074588e-16,
+    "kldi_max": 29.21928095291317,
+    "kldi_negative_count": 0,
+    "kldi_near_zero_share": 0.06285714285714286,
+    "kldi_near_zero_share_hh": 0.22,
+    "kldi_near_zero_share_hk": 0.0,
+    "kldi_epsilon": 1e-10,
+    "hh_min": -1.6017132519074588e-16,
+    "hh_q1": 6.046600724330449,
+    "hh_median": 28.049355958107252,
+    "hh_q3": 28.971353440335196,
+    "hh_max": 29.13181811223991,
+    "hh_mean": 21.01629918644867,
+    "hk_min": 0.20010921905793486,
+    "hk_q1": 5.605185411163271,
+    "hk_median": 13.228770272075717,
+    "hk_q3": 18.125675281805012,
+    "hk_max": 29.21928095291317,
+    "hk_mean": 12.48878045282287,
+    "roc_auc_effective": 0.74058,
+    "roc_auc_direction": "inverted",
+    "share_detectable_hh": 0.0,
+    "share_detectable_hk": 0.0,
+    "balanced_accuracy_threshold": 0.5
+  },
+  "analysis": {
+    "interpretation": "Es besteht ein klarer und statistisch signifikanter Unterschied zwischen Human→Human und Human→KI, jedoch in entgegengesetzter Richtung zur erwarteten Detektion: Human→Human weist im Mittel höhere KLDI-Werte auf als Human→KI. Der KLDI ist in dieser Konfiguration daher kein sinnvoller KI-Detektor, sondern spiegelt vor allem methodische Verzerrungen (z. B. gewählte Richtung der Divergenz) wider.",
+    "llm_summary": "Die Ergebnisse zeigen, dass KI-Texte in dieser Stichprobe anhand des KLDI zwar statistisch signifikant vom menschlichen Text unterschieden werden können (p < 0,001), jedoch ist die Klassifikationsleistung mit einer invertierten AUC von etwa 0,26 gering, was auf eine schlechte Trennbarkeit hinweist. Die große Effektstärke (Cliffs Delta ≈ 0,48) und die robusten Stichprobengrößen von mehreren hundert Dokumenten sprechen für einen mittelgroßen bis großen Effekt, dennoch sind die KI-Texte in der Praxis nicht zuverlässig unterscheidbar. Insgesamt ist die Aussage durch die ausreichende Stichprobengröße und signifikante Effekte zwar robust, die praktische Erkennbarkeit der KI-Texte anhand des KLDI bleibt jedoch eingeschränkt und eher explorativ.",
+    "kldi_diagnostics": {
+      "human_human_count": 200,
+      "human_ki_count": 500,
+      "range": {
+        "min": -1.6017132519074588e-16,
+        "max": 29.21928095291317
+      },
+      "nonnegativity": {
+        "violations": 0,
+        "epsilon": 1e-10
+      },
+      "near_zero": {
+        "overall": 0.06285714285714286,
+        "human_human": 0.22,
+        "human_ki": 0.0
+      },
+      "roc": {
+        "auc": 0.25942,
+        "auc_effective": 0.74058,
+        "direction": "inverted",
+        "ci": [
+          0.21064975,
+          0.32131475
+        ]
+      },
+      "threshold": {
+        "adaptive": 63.35848251434231,
+        "share_detectable_hh": 0.0,
+        "share_detectable_hk": 0.0,
+        "balanced_accuracy": 0.5
+      }
+    }
+  }
+}
